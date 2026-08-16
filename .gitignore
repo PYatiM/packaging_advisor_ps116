@@ -1,7 +1,30 @@
-.env
-projecttitle.txt
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
 
-venv
-college_review_presentation.md
-custom_llm_walkthrough.md
-glide.ini
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment/secrets
+.env
+.env.*
+
+# ML artifacts
+*.pt
+*.pth
+*.bin
+*.safetensors
+checkpoints/
+results/
+runs/
+
+# Large datasets
+*.csv
+*.jsonl
+data/
+
+# OS
+.DS_Store
