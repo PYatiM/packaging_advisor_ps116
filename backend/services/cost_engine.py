@@ -4,7 +4,13 @@ class DynamicCostEngine:
 
     def get_current_rates(self):
         """
-        Simulated rate card for packaging + transport.
+        Illustrative assumed domestic parcel rates for this prototype, as of
+        2025-01-15: Rs. 60/kg for air and Rs. 15/kg for surface. These values
+        are calibrated to be broadly consistent with private courier per-kg
+        pricing for small parcels in India, but are not tied to any single
+        published rate card. They are configurable via
+        backend.core.config.Settings and can be overridden with environment
+        variables.
 
         Cost model:
           - Cartons (C-*): "material" is the box cost; shipping uses
@@ -14,9 +20,6 @@ class DynamicCostEngine:
             before distance multiplier).
           - Trucks (FTL): "material" is loading, lashing, and crating;
             "flat_rate" is the base freight rate for the lane.
-
-        Benchmarks calibrated against 2024-2026 published Delhi-Bangalore
-        FTL/PTL/courier quotes.
         """
         return {
             # --- Courier cartons (per-kg shipping via router) ---

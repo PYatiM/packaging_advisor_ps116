@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List
 
 class SKUItem(BaseModel):
@@ -13,6 +13,8 @@ class SKUItem(BaseModel):
     orientation_sensitive: bool = False
 
 class CartRequest(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     items: List[SKUItem]
     source_pin: str = "110001"
     destination_pin: str

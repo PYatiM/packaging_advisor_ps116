@@ -1,9 +1,17 @@
 from fastapi import APIRouter
+from backend.core.config import settings
 from backend.schemas.cart import CartRequest, RecommendationResponse
 from backend.ml.predictor import DamagePredictor
 from backend.optimization.solver import PackingSolver
 from backend.services.cost_engine import DynamicCostEngine
 from backend.genai.service import ExplainerService
+
+# Illustrative prototype assumptions as of 2025-01-15, calibrated broadly to
+# private-courier per-kg pricing for small parcels in India. These are not
+# taken from any single published rate card: Air = Rs. 60/kg, Surface = Rs. 15/kg.
+# Override via AIR_BASE_RATE_PER_KG / SURFACE_BASE_RATE_PER_KG environment variables.
+AIR_BASE_RATE_PER_KG = settings.AIR_BASE_RATE_PER_KG
+SURFACE_BASE_RATE_PER_KG = settings.SURFACE_BASE_RATE_PER_KG
 
 api_router = APIRouter()
 
@@ -126,12 +134,12 @@ def recommend_packaging(request: CartRequest):
         elif "Perishable Goods" in categories:
             valid_modes.append(("Refrigerated Road", 20.0,
                                 "Cold-Chain Transport -- temperature-controlled surface transit."))
-            valid_modes.append(("Air", 60.0,
+            valid_modes.append(("Air", AIR_BASE_RATE_PER_KG,
                                 "Express Air Freight -- speed prioritised for perishables."))
         else:
-            valid_modes.append(("Surface", 15.0,
+            valid_modes.append(("Surface", SURFACE_BASE_RATE_PER_KG,
                                 f"Surface Freight -- cost-effective for {source_zone} to {dest_zone}."))
-            valid_modes.append(("Air", 60.0,
+            valid_modes.append(("Air", AIR_BASE_RATE_PER_KG,
                                 f"Standard Air Freight -- fast transit for {source_zone} to {dest_zone}."))
 
         # -- Build all (mode x box) combinations -------------------------
@@ -143,7 +151,9 @@ def recommend_packaging(request: CartRequest):
                 util_pct = res["utilization_pct"]
                 box_vol = res.get("box_vol", 0)
 
-                r_prob = predictor.predict_damage_risk(group, util_pct)
+                r_prob = predictor.predict_damage_risk(
+                    group, util_pct, distance_multiplier
+                )
 
                 vol_wt = box_vol / 5000.0
                 charge_wt = max(group_wt, vol_wt)

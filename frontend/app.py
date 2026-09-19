@@ -7,6 +7,16 @@ import json
 
 # Default to the docker-compose service name 'api', allowing override via env var
 API_URL = os.getenv("API_URL", "http://api:8000/api/v1")
+CATEGORY_OPTIONS = [
+    "Textiles & Apparel",
+    "Precision Electronics",
+    "Fine Art & Antiques",
+    "Automotive Parts",
+    "Perishable Goods",
+    "Books & Media",
+    "Industrial Machinery",
+    "Glass & Ceramics",
+]
 
 
 def calculate_fragility(category, length, width, height, weight):
@@ -18,7 +28,7 @@ def calculate_fragility(category, length, width, height, weight):
         base_frag = 0.75
     elif category == "Perishable Goods":
         base_frag = 0.60
-    elif category in ["Apparel & Textiles", "Books & Media"]:
+    elif category in ["Textiles & Apparel", "Books & Media"]:
         base_frag = 0.15
     elif category == "Automotive Parts":
         base_frag = 0.40
@@ -72,11 +82,13 @@ if "use_genai" not in st.session_state:
     st.session_state.use_genai = True
 
 theme = st.session_state.theme_mode
-bg_gradient = "linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)" if theme == "Light" else "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)"
-text_color = "#0f172a" if theme == "Light" else "#f8fafc"
-alt_bg = "rgba(241,245,249,0.8)" if theme == "Light" else "rgba(30,41,59,0.5)"
-alt_border = "#cbd5e1" if theme == "Light" else "#334155"
-alt_text_muted = "#475569" if theme == "Light" else "#94a3b8"
+page_bg = "#fff8ee" if theme == "Light" else "#101827"
+panel_bg = "#ffffff" if theme == "Light" else "#172235"
+soft_bg = "#ffe9d6" if theme == "Light" else "#24324a"
+text_color = "#172235" if theme == "Light" else "#f8fbff"
+alt_border = "#f0b58b" if theme == "Light" else "#38506d"
+alt_text_muted = "#536277" if theme == "Light" else "#b7c5d8"
+accent_color = st.session_state.accent_color
 
 # ---------------------------------------------------------------
 # Custom CSS
@@ -85,11 +97,30 @@ st.markdown(f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
     html, body, [class*="css"]  {{ font-family: 'Inter', sans-serif !important; }}
-    .stApp {{ background: {bg_gradient}; color: {text_color}; }}
-    [data-testid="stMetricValue"] {{ color: {st.session_state.accent_color} !important; text-shadow: 0 0 15px {st.session_state.accent_color}80; font-weight: 800; }}
+    .stApp {{ background: {page_bg}; }}
+    [data-testid="stHeader"] {{ background: {page_bg}; }}
+    [data-testid="stVerticalBlockBorderWrapper"] {{ background: {panel_bg}; border-color: {alt_border}; }}
+    [data-testid="stMetric"] {{ background: {panel_bg}; border: 1px solid {alt_border}; padding: 12px; border-radius: 8px; }}
+    [data-testid="stAlert"] {{ border-radius: 8px; }}
+    h1, h2, h3, h4, h5, h6, p, label, span, .stMarkdown, [data-testid="stText"] {{ color: {text_color} !important; }}
+
+    /* Metrics */
+    [data-testid="stMetricValue"] {{ color: {accent_color} !important; font-weight: 800; }}
+
+    /* Buttons */
     .stButton button {{ transition: all 0.3s ease !important; border-radius: 8px !important; }}
-    .stButton button[kind="primary"] {{ background: {st.session_state.accent_color} !important; border: none !important; color: white !important; font-weight: 600 !important; }}
-    .stButton button[kind="primary"]:hover {{ box-shadow: 0 10px 25px {st.session_state.accent_color}80 !important; transform: translateY(-2px); }}
+    .stButton button[kind="primary"] {{ background: {accent_color} !important; border: 2px solid {accent_color} !important; color: #101827 !important; font-weight: 800 !important; }}
+    .stButton button[kind="primary"]:hover {{ background: #ff6b5e !important; border-color: #ff6b5e !important; color: white !important; }}
+
+    /* Tabs */
+    [data-baseweb="tab"][aria-selected="true"] {{ border-bottom-color: {accent_color} !important; }}
+    [data-baseweb="tab"][aria-selected="true"] p {{ color: {accent_color} !important; font-weight: 800 !important; }}
+
+    /* Inputs & Interactivity */
+    .stTextInput input:focus, .stNumberInput input:focus, [data-baseweb="select"]:focus-within {{ border-color: {accent_color} !important; }}
+    [data-testid="stExpander"] summary:hover p {{ color: {accent_color} !important; }}
+    hr {{ border-color: {accent_color} !important; }}
+
     #MainMenu {{visibility: hidden;}} footer {{visibility: hidden;}} header {{visibility: hidden;}}
     </style>
 """, unsafe_allow_html=True)
@@ -113,22 +144,25 @@ tab_cart, tab_insights, tab_settings = st.tabs([
 
 # ===================== TAB 1: CART ==============================
 with tab_cart:
+    cart_count = len(st.session_state.cart)
+    cart_weight = sum(item["weight_kg"] for item in st.session_state.cart)
+    cart_volume = sum(
+        item["length_cm"] * item["width_cm"] * item["height_cm"]
+        for item in st.session_state.cart
+    )
+    summary_1, summary_2, summary_3 = st.columns(3)
+    summary_1.metric("Items", cart_count)
+    summary_2.metric("Total weight", f"{cart_weight:,.1f} kg")
+    summary_3.metric("Total volume", format_volume(cart_volume))
+    st.markdown("### Build your order")
+    st.caption("Add products on the left, then review and edit the order on the right.")
     col_form, col_table = st.columns([1, 2.5])
 
     with col_form:
-        st.subheader("Add Item")
         with st.container():
+            st.subheader("Add item")
             sku = st.text_input("SKU ID", placeholder="SKU-1001")
-            category = st.selectbox("Category", [
-                "Apparel & Textiles",
-                "Precision Electronics",
-                "Fine Art & Antiques",
-                "Automotive Parts",
-                "Perishable Goods",
-                "Books & Media",
-                "Industrial Machinery",
-                "Glass & Ceramics",
-            ])
+            category = st.selectbox("Category", CATEGORY_OPTIONS)
 
             c1, c2 = st.columns(2)
             length = c1.number_input("L (cm)", min_value=1.0, value=10.0, step=1.0)
@@ -140,7 +174,7 @@ with tab_cart:
             orientation_sensitive = st.checkbox("Orientation Sensitive (This Way Up)")
 
             if st.button("Add to Cart", use_container_width=True, type="primary"):
-                if not sku:
+                if not sku.strip():
                     st.error("SKU ID required!")
                 else:
                     frag = calculate_fragility(category, length, width, height, weight)
@@ -157,12 +191,16 @@ with tab_cart:
                     })
                     st.experimental_rerun()
 
-        with st.expander("Bulk JSON Load"):
+        with st.expander("Bulk JSON load"):
             json_dump = st.text_area("Paste JSON Array", height=100)
             if st.button("Load JSON", use_container_width=True):
                 try:
                     items = json.loads(json_dump)
+                    if not isinstance(items, list):
+                        raise ValueError("JSON must contain an array of items.")
                     for item in items:
+                        if not isinstance(item, dict):
+                            raise ValueError("Each array entry must be an object.")
                         if "fragility_score" not in item:
                             item["fragility_score"] = calculate_fragility(
                                 item.get("product_category", "Books & Media"),
@@ -177,7 +215,7 @@ with tab_cart:
                     st.error(f"Invalid JSON: {e}")
 
     with col_table:
-        st.subheader("Current Order")
+        st.subheader("Review order")
         if st.session_state.cart:
             df = pd.DataFrame(st.session_state.cart)
             edited_df = st.data_editor(
@@ -194,11 +232,7 @@ with tab_cart:
                 item["length_cm"] * item["width_cm"] * item["height_cm"]
                 for item in st.session_state.cart
             )
-            st.caption(
-                f"**{len(st.session_state.cart)} items** | "
-                f"**Weight:** {total_wt:,.1f} kg | "
-                f"**Volume:** {format_volume(total_vol)}"
-            )
+            st.caption(f"{len(st.session_state.cart)} items | {total_wt:,.1f} kg | {format_volume(total_vol)}")
 
             c_btn1, c_btn2 = st.columns(2)
             if c_btn1.button("Remove Last Item", use_container_width=True) and st.session_state.cart:
@@ -212,19 +246,23 @@ with tab_cart:
 
 # ===================== TAB 2: INSIGHTS ==========================
 with tab_insights:
-    st.subheader("Optimise & Analyse")
+    st.subheader("Optimise & analyse")
+    st.caption("Set the route, then generate a packing and freight recommendation.")
 
-    col_p1, col_p2 = st.columns(2)
-    source_pin = col_p1.text_input(
+    with st.container():
+        col_p1, col_p2 = st.columns(2)
+        source_pin = col_p1.text_input(
         "Source PIN Code", value="110001", help="6-digit Indian PIN code"
-    )
-    dest_pin = col_p2.text_input(
+        )
+        dest_pin = col_p2.text_input(
         "Destination PIN Code", value="560001", help="6-digit Indian PIN code"
-    )
+        )
 
     if st.button("Run Optimisation", type="primary", use_container_width=True):
         if not st.session_state.cart:
             st.warning("Add items to cart first.")
+        elif not (source_pin.isdigit() and len(source_pin) == 6 and dest_pin.isdigit() and len(dest_pin) == 6):
+            st.error("Enter valid six-digit source and destination PIN codes.")
         else:
             with st.spinner("Running 3D Bin Packing & cost analysis..."):
                 payload = {
@@ -235,7 +273,7 @@ with tab_insights:
                     "model_provider": st.session_state.model_provider,
                 }
                 try:
-                    res = requests.post(f"{API_URL}/recommend", json=payload)
+                    res = requests.post(f"{API_URL}/recommend", json=payload, timeout=60)
                     if res.status_code == 200:
                         data = res.json()
 
@@ -283,43 +321,48 @@ with tab_insights:
                                     f"**Transit Mode:** "
                                     f"{shipment.get('transit_mode_advice', 'Standard')}"
                                 )
+                                st.write("")
 
                                 alts = shipment.get("alternatives", [])
                                 if alts:
-                                    st.markdown("#### Alternatives")
+                                    st.markdown("#### Cost Alternatives")
                                     alt_cols = st.columns(len(alts))
                                     for a_idx, alt in enumerate(alts):
                                         with alt_cols[a_idx]:
+                                            formatted_cb = alt['cost_breakdown'].replace(" | ", "<br>• ")
                                             st.markdown(f"""
-<div style='border: 1px solid {alt_border}; border-radius: 8px; padding: 15px; background: {alt_bg};'>
-    <h4 style='margin-top:0; color:{st.session_state.accent_color}'>{alt['tier_name']}</h4>
-    <h3 style='margin:0; color:{text_color}'>{format_cost(alt['total_cost'])}</h3>
-    <p style='color:{alt_text_muted}; font-size:0.9em; margin-bottom:5px'>Container: <b>{alt['carton_id']}</b></p>
-    <p style='margin:0; font-size:0.85em; color:{text_color}'>Utilisation: {alt['utilization_pct']*100:.1f}% | Risk: {alt['risk_probability']*100:.1f}%</p>
-    <p style='color:{alt_text_muted}; font-size:0.75em; margin-top:5px'>{alt['cost_breakdown']}</p>
+<div style='border: 2px solid {alt_border}; border-radius: 8px; padding: 20px; background: {panel_bg}; height: 100%; margin-bottom: 15px;'>
+    <h4 style='margin-top:0; color:{accent_color}; margin-bottom: 15px;'>{alt['tier_name']}</h4>
+    <h2 style='margin:0; color:{text_color}; margin-bottom: 15px;'>{format_cost(alt['total_cost'])}</h2>
+
+    <div style='background: {soft_bg}; padding: 12px; border-radius: 6px; margin-bottom: 15px; border: 1px solid {alt_border};'>
+        <p style='color:{text_color}; font-size:0.95em; margin:0 0 5px 0;'>Container: <b>{alt['carton_id']}</b></p>
+        <p style='margin:0; font-size:0.85em; color:{text_color}'>Utilisation: {alt['utilization_pct']*100:.1f}% &nbsp;|&nbsp; Risk: {alt['risk_probability']*100:.1f}%</p>
+    </div>
+
+    <p style='color:{alt_text_muted}; font-size:0.85em; line-height: 1.8; margin: 0;'>• {formatted_cb}</p>
 </div>
                                             """, unsafe_allow_html=True)
 
-                                st.markdown("#### Analysis")
-                                it1, it2 = st.tabs(["Reasoning", "Packing Instructions"])
+                                st.write("")
+                                st.markdown("#### Detailed Analysis")
+                                it1, it2 = st.tabs(["AI Reasoning", "Packing Instructions"])
                                 with it1:
+                                    st.write("")
                                     st.markdown(shipment["genai_explanation"])
-                                    with st.container():
-                                        st.caption(
-                                            f"**Container Reasoning:** "
-                                            f"{shipment.get('carton_reasoning', '')}"
-                                        )
-                                        st.caption(
-                                            f"**Risk Factor:** "
-                                            f"{shipment.get('risk_reasoning', '')}"
-                                        )
+                                    st.divider()
+                                    st.markdown(f"> **System Reasoning:** {shipment.get('carton_reasoning', '')}")
+                                    st.markdown(f"> **Risk Factor:** {shipment.get('risk_reasoning', '')}")
+                                    st.write("")
                                 with it2:
+                                    st.write("")
                                     st.markdown(
                                         shipment.get(
                                             "packing_instructions",
                                             "No specific instructions.",
                                         )
                                     )
+                                    st.write("")
 
                     else:
                         st.error(f"Backend Error: {res.text}")
@@ -331,7 +374,7 @@ with tab_settings:
     st.subheader("System Settings")
 
     st.markdown("### UI Theme")
-    
+
     col_t1, col_t2 = st.columns(2)
     theme_choice = col_t1.radio(
         "Mode", 
@@ -342,7 +385,7 @@ with tab_settings:
     if theme_choice != st.session_state.theme_mode:
         st.session_state.theme_mode = theme_choice
         st.experimental_rerun()
-        
+
     accent = col_t2.color_picker("Accent Colour", value=st.session_state.accent_color)
     if accent != st.session_state.accent_color:
         st.session_state.accent_color = accent

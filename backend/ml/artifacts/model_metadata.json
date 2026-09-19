@@ -1,0 +1,26 @@
+{
+  "best_model": "RandomForest",
+  "feature_columns": [
+    "max_fragility",
+    "void_space_pct",
+    "total_weight_kg",
+    "item_count",
+    "has_liquid",
+    "orientation_sensitive",
+    "distance_multiplier",
+    "weight_density",
+    "category_encoded"
+  ],
+  "metrics": {
+    "model": "RandomForest",
+    "accuracy": 0.838,
+    "f1_score": 0.7245,
+    "roc_auc": 0.913,
+    "avg_precision": 0.8134,
+    "cv_auc_mean": 0.9253,
+    "cv_auc_std": 0.0036
+  },
+  "dataset": "synthetic_rule_perturbed_with_noise",
+  "n_train_samples": 8000,
+  "n_test_samples": 2000
+}

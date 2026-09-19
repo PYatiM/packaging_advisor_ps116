@@ -1,0 +1,20 @@
+{
+  "XGBoost": {
+    "model": "XGBoost",
+    "accuracy": 0.854,
+    "f1_score": 0.7192,
+    "roc_auc": 0.9121,
+    "avg_precision": 0.8128,
+    "cv_auc_mean": 0.925,
+    "cv_auc_std": 0.0045
+  },
+  "RandomForest": {
+    "model": "RandomForest",
+    "accuracy": 0.838,
+    "f1_score": 0.7245,
+    "roc_auc": 0.913,
+    "avg_precision": 0.8134,
+    "cv_auc_mean": 0.9253,
+    "cv_auc_std": 0.0036
+  }
+}
