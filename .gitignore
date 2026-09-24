@@ -1,6 +1,10 @@
 # Python
 __pycache__/
 *.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .venv/
 venv/
 env/
@@ -8,25 +12,29 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
-# Environment/secrets
+# Environment & secrets (keep template tracked)
 .env
 .env.*
+!.env.example
 
-# ML artifacts
+# ML checkpoints & run logs
 *.pt
 *.pth
 *.bin
 *.safetensors
 checkpoints/
-results/
 runs/
 
-# Large datasets
-*.csv
-*.jsonl
+# Local databases & runtime data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 data/
 
-# OS
+# IDE & OS
+.vscode/
+.idea/
 .DS_Store
-
+Thumbs.db
 project_report.tex
