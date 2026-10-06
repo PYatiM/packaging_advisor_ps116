@@ -1,26 +1,35 @@
 {
-  "best_model": "RandomForest",
+  "best_model": "XGBoost",
+  "calibrated": true,
+  "calibration_method": "isotonic",
   "feature_columns": [
     "max_fragility",
-    "void_space_pct",
+    "mean_fragility",
+    "unprotected_void_pct",
+    "cushion_adequacy_ratio",
     "total_weight_kg",
     "item_count",
     "has_liquid",
     "orientation_sensitive",
     "distance_multiplier",
-    "weight_density",
+    "handling_nodes",
+    "weight_to_limit_ratio",
+    "board_ect_kn_m",
+    "transit_vibration_factor",
+    "incompatibility_hazard",
     "category_encoded"
   ],
   "metrics": {
-    "model": "RandomForest",
-    "accuracy": 0.838,
-    "f1_score": 0.7245,
-    "roc_auc": 0.913,
-    "avg_precision": 0.8134,
-    "cv_auc_mean": 0.9253,
-    "cv_auc_std": 0.0036
+    "model": "XGBoost",
+    "accuracy": 0.8896,
+    "f1_score": 0.6908,
+    "roc_auc": 0.8919,
+    "avg_precision": 0.7684,
+    "brier_score": 0.0848,
+    "cv_auc_mean": 0.8865,
+    "cv_auc_std": 0.0096
   },
-  "dataset": "synthetic_rule_perturbed_with_noise",
-  "n_train_samples": 8000,
-  "n_test_samples": 2000
+  "dataset": "physics_grounded_synthetic_with_logistic_noise",
+  "n_train_samples": 9600,
+  "n_test_samples": 2400
 }
