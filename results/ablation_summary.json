@@ -1,0 +1,104 @@
+{
+  "metadata": {
+    "num_carts": 200,
+    "seed": 42
+  },
+  "ablation_grouping": {
+    "utilization_pct": {
+      "grouping_on_mean": 28.6025,
+      "grouping_on_std": 13.330877156061412,
+      "grouping_off_mean": 31.2621,
+      "grouping_off_std": 12.937848762062416,
+      "absolute_delta": 2.6596,
+      "pct_change": 9.3,
+      "wilcoxon_stat": 2032.0,
+      "wilcoxon_p_value": 1.6442883708721702e-06
+    },
+    "total_estimated_cost": {
+      "grouping_on_mean": 1138.6257999999998,
+      "grouping_on_std": 962.2655240230525,
+      "grouping_off_mean": 644.9658999999999,
+      "grouping_off_std": 415.4596045865229,
+      "absolute_delta": -493.6599,
+      "pct_change": -43.36,
+      "wilcoxon_stat": 148.0,
+      "wilcoxon_p_value": 2.9345866219539123e-21
+    },
+    "damage_risk_probability": {
+      "grouping_on_mean": 0.1124565,
+      "grouping_on_std": 0.08793757307175358,
+      "grouping_off_mean": 0.32119549999999997,
+      "grouping_off_std": 0.29793719645212147,
+      "absolute_delta": 0.2087,
+      "pct_change": 185.62,
+      "wilcoxon_stat": 190.0,
+      "wilcoxon_p_value": 7.593696726925935e-21
+    }
+  },
+  "ablation_genai_explanation": {
+    "finding": "GenAI explanation layer is strictly post-hoc with ZERO effect on optimization metrics.",
+    "decision_input": false,
+    "delta_utilization_pct": 0.0,
+    "delta_total_cost_inr": 0.0,
+    "delta_damage_risk": 0.0,
+    "p_value_vs_off": 1.0,
+    "description": "ExplainerService runs strictly after CP-SAT container packing, Zone A-E routing, DynamicCostEngine billing, and DamagePredictor scoring."
+  },
+  "sensitivity_analysis": {
+    "baseline_mean_risk": 0.287,
+    "perturbations": {
+      "max_fragility": {
+        "-25%": {
+          "mean_risk": 0.2491,
+          "delta_risk": -0.0379,
+          "pct_change_in_risk": -13.21
+        },
+        "+25%": {
+          "mean_risk": 0.3091,
+          "delta_risk": 0.0221,
+          "pct_change_in_risk": 7.7
+        },
+        "elasticity_index": 0.418
+      },
+      "unprotected_void_pct": {
+        "-25%": {
+          "mean_risk": 0.2374,
+          "delta_risk": -0.0496,
+          "pct_change_in_risk": -17.27
+        },
+        "+25%": {
+          "mean_risk": 0.2975,
+          "delta_risk": 0.0105,
+          "pct_change_in_risk": 3.65
+        },
+        "elasticity_index": 0.418
+      },
+      "cushion_adequacy_ratio": {
+        "-25%": {
+          "mean_risk": 0.3718,
+          "delta_risk": 0.0848,
+          "pct_change_in_risk": 29.56
+        },
+        "+25%": {
+          "mean_risk": 0.2994,
+          "delta_risk": 0.0124,
+          "pct_change_in_risk": 4.33
+        },
+        "elasticity_index": 0.678
+      },
+      "board_ect_kn_m": {
+        "-25%": {
+          "mean_risk": 0.2944,
+          "delta_risk": 0.0074,
+          "pct_change_in_risk": 2.58
+        },
+        "+25%": {
+          "mean_risk": 0.2864,
+          "delta_risk": -0.0006,
+          "pct_change_in_risk": -0.2
+        },
+        "elasticity_index": 0.056
+      }
+    }
+  }
+}

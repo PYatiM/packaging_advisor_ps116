@@ -1,0 +1,106 @@
+{
+  "conditions": {
+    "proposed": {
+      "utilization_pct": {
+        "mean": 28.6025,
+        "std": 13.330877156061412
+      },
+      "total_estimated_cost": {
+        "mean": 1138.6257999999998,
+        "std": 962.2655240230525
+      },
+      "damage_risk_probability": {
+        "mean": 0.1124565,
+        "std": 0.08793757307175358
+      }
+    },
+    "always_largest": {
+      "utilization_pct": {
+        "mean": 1.15775,
+        "std": 1.1079207722125262
+      },
+      "total_estimated_cost": {
+        "mean": 11264.184,
+        "std": 7000.545435353162
+      },
+      "damage_risk_probability": {
+        "mean": 0.19955949999999997,
+        "std": 0.13962623037864338
+      }
+    },
+    "simulated_manual": {
+      "utilization_pct": {
+        "mean": 45.98635,
+        "std": 22.10232967760412
+      },
+      "total_estimated_cost": {
+        "mean": 634.5768499999999,
+        "std": 416.79006166723497
+      },
+      "damage_risk_probability": {
+        "mean": 0.43713899999999994,
+        "std": 0.28702022573156755
+      }
+    },
+    "no_grouping": {
+      "utilization_pct": {
+        "mean": 31.2621,
+        "std": 12.937848762062416
+      },
+      "total_estimated_cost": {
+        "mean": 644.9658999999999,
+        "std": 415.4596045865229
+      },
+      "damage_risk_probability": {
+        "mean": 0.32119549999999997,
+        "std": 0.29793719645212147
+      }
+    }
+  },
+  "wilcoxon_tests_vs_proposed": {
+    "always_largest": {
+      "utilization_pct": {
+        "statistic": 0.0,
+        "p_value": 1.4361261857789638e-34
+      },
+      "total_estimated_cost": {
+        "statistic": 0.0,
+        "p_value": 1.4361464127613523e-34
+      },
+      "damage_risk_probability": {
+        "statistic": 280.0,
+        "p_value": 1.368438354190248e-32
+      }
+    },
+    "simulated_manual": {
+      "utilization_pct": {
+        "statistic": 163.0,
+        "p_value": 9.595566226420854e-24
+      },
+      "total_estimated_cost": {
+        "statistic": 437.0,
+        "p_value": 6.271085016885755e-27
+      },
+      "damage_risk_probability": {
+        "statistic": 22.0,
+        "p_value": 3.859592466817081e-30
+      }
+    },
+    "no_grouping": {
+      "utilization_pct": {
+        "statistic": 2032.0,
+        "p_value": 1.6442883708721702e-06
+      },
+      "total_estimated_cost": {
+        "statistic": 148.0,
+        "p_value": 2.9345866219539123e-21
+      },
+      "damage_risk_probability": {
+        "statistic": 190.0,
+        "p_value": 7.593696726925935e-21
+      }
+    }
+  },
+  "scenario_count": 200,
+  "seed": 42
+}
