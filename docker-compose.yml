@@ -5,12 +5,16 @@ services:
       dockerfile: deployment/Dockerfile.api
     ports:
       - "8000:8000"
+    volumes:
+      - ./data:/app/data
     env_file:
       - .env
   ui:
     build:
       context: .
       dockerfile: deployment/Dockerfile.ui
+    environment:
+      - API_URL=http://api:8000/api/v1
     ports:
       - "8501:8501"
     depends_on:
