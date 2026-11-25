@@ -2,111 +2,75 @@
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{graphicx}
 \usepackage{booktabs}
-\usepackage{hyperref}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{cite}
+\pagestyle{empty}
 
 \begin{document}
 
-\title{PackOptima: Standards-Grounded 3D Constraint Bin Packing, Calibrated Transit-Damage Learning, and Multi-Objective Freight Optimization}
+\title{PackOptima: Physics-Informed Three-Dimensional Bin Packing, Calibrated Damage Risk Estimation, and Carbon-Aware Freight Optimization}
 
-\author{\IEEEauthorblockN{Yathi M. and Packaging Advisor Engineering Group}
-\IEEEauthorblockA{Department of Computer Science and Engineering — Project PS116, India}}
+\author{\IEEEauthorblockN{P Yathin Machaiah}
+\IEEEauthorblockA{Department of CSE - Cyber Security\\
+Dayananda Sagar University\\
+p.yathinmachaiah18@gmail.com}}
 
 \maketitle
+\thispagestyle{empty}
 
 \begin{abstract}
-E-commerce and business-to-business logistics in developing freight networks suffer simultaneously from dimensional-weight overbilling and preventable transit damage caused by unsafe cargo commingling, under-cushioned boxes, and corrugated wall collapse under humid monsoon handling. We present \textbf{PackOptima}, an integrated decision-support architecture combining rule-based cargo compatibility segregation, an OR-Tools CP-SAT three-dimensional bin-packing solver with ISTA 3A protective clearance envelopes and multi-carton splitting, an Indian six-digit PIN Zone A--E routing and freight rate engine, and an isotonically calibrated 15-feature machine-learning damage-risk predictor (XGBoost ROC-AUC = 0.8919, Brier = 0.0848). Across 200 diverse synthetic multi-SKU orders, the proposed pipeline lowers mean transit damage probability by 74.3\% versus simulated manual bounding-box packing (0.112 vs.\ 0.437, Wilcoxon $p < 0.001$) and by 65.0\% versus unsegregated co-packing (0.321, $p < 0.001$), while slashing freight spend by 89.9\% relative to always-largest-box defaults (Rs.\ 1,138.63 vs.\ Rs.\ 11,264.18, $p < 0.001$). An optional post-hoc LLM layer supporting Gemini 2.5 and Hugging Face Qwen2.5 small models alters zero geometric or financial decisions.
+Modern parcel and less-than-truckload e-commerce logistics face a coupled optimization dilemma: minimizing dimensional-weight freight surcharges while preventing shock-induced mechanical damage across multi-node sortation hubs. This paper introduces PackOptima, unifying compatibility-constrained cart partitioning across 10 standardized product categories, Constraint Programming (CP-SAT) three-dimensional packing over 14 BIS IS 2771 (Part 1): 2022 and cold-chain container tiers with ISTA 3A padding rules and a scalable Shelf-FFD fallback ($n > 35$), an isotonic-calibrated XGBoost damage probability estimator trained on 15 physical descriptors across 12,000 shipments ($\text{ROC-AUC} = 0.8919$, Brier $= 0.0848$), and an Indian PIN-zone freight and Scope 3 carbon engine. Across 200 stratified carts, compatibility ablation increases damage risk by $+185.6\%$ ($p = 7.59e-21$), while LLM advisory isolation maintains $0.00\%$ numerical perturbation.
 \end{abstract}
 
 \begin{IEEEkeywords}
-3D bin packing, BIS IS 2771, calibrated risk learning, constraint programming, cold-chain logistics, freight optimization, ISTA 3A.
+Three-dimensional bin packing, CP-SAT, ISTA 3A cushioning, probability calibration, XGBoost, Scope 3 emissions.
 \end{IEEEkeywords}
 
 \section{Introduction}
-Domestic parcel and part-truckload (PTL) fulfillment networks face conflicting operational pressures: shipping items in oversized corrugated boxes triggers steep dimensional-weight surcharges, whereas packing fragile items tightly without padding accelerates corner impact and Edge Crush Test (ECT) collapse \cite{ista3a,is2771}. In Indian freight lanes, +40\,$^\circ$C summer heat and monsoon humidity cut corrugated board compression strength by 30\%--50\%. PackOptima integrates cargo segregation, ISTA-padded 3D CP-SAT packing, Zone A--E routing, Scope 3 carbon accounting, and isotonic ML damage scoring behind a decoupled post-hoc LLM interface.
+Secondary packaging efficiency directly governs volumetric carrier surcharges ($LWH/5000$) and transit shock survivorship [1], [2]. Standard heuristics decouple spatial fit from Edge Crush Test (ECT) board ratings, cushion deformation, and cross-category incompatibility [3], [4]. PackOptima resolves these deficits by tightly coupling deterministic 3D optimization, calibrated machine learning, and Indian freight tariff physics.
 
 \section{Related Work}
-Three-dimensional orthogonal bin packing has been formulated using branch-and-bound and constraint programming \cite{martello2000,ortools}. Prior freight calculators seldom integrate BIS IS 2771 ply/ECT specs or ISTA 3A clearance thickness directly into calibrated probability models \cite{chen2016,zadrozny2002}.
+Orthogonal 3D-BPP is strongly NP-hard [5]--[7]. Constraint Programming via OR-Tools CP-SAT [8] handles upright locks and multi-carton splits natively. Box compressive limits follow McKee formulations [9] alongside ISTA 3A drop dynamics [10], while isotonic calibration stabilizes tree probability estimates [4], [11], [12].
 
-\section{Methodology and System Architecture}
-\begin{figure}[t]
-\centering
-\includegraphics[width=\linewidth]{figures/fig1_architecture.png}
-\caption{End-to-end PackOptima pipeline illustrating strict post-hoc decoupling of LLM narrative generation.}
-\label{fig:arch}
-\end{figure}
-
-\subsection{Cargo Compatibility Segregation}
-Incompatible cargo is segregated into \textit{perishables}, \textit{liquids}, \textit{electronics}, \textit{fragile\_delicate}, \textit{heavy\_industrial}, and \textit{general} dry shipments.
-
-\subsection{ISTA 3A 3D CP-SAT Formulation}
-Each item receives per-face ISTA clearance $p_i \in \{0, 0.5, 1.5, 2.0, 2.5, 3.0\}$\,cm:
+\section{Problem Formulation and Domain Constraints}
+Intrinsic item fragility combines baseline $f_{\text{base}}$, bulk density $\rho_i$, and aspect ratio $d_{\max}/d_{\min}$; incompatibility partitioning minimizes hazard weights:
 \begin{equation}
-l'_i = l_i + 2p_i,\quad w'_i = w_i + 2p_i,\quad h'_i = h_i + 2p_i
+\min \sum_k \sum_{i,j \in G_k} H(c_i, c_j) \quad \text{s.t.} \quad T_{\text{cold}}(i) = T_{\text{cold}}(j).
 \end{equation}
-Pairwise non-overlap uses six disjunctive Boolean literals $b_{ijk}$ and a gravity-weighted objective:
-\begin{equation}
-\min \sum_i \max(1, \lfloor 10 m_i \rceil)\,(8z_i + x_i + y_i)
-\end{equation}
-
-\subsection{Zone A--E Routing, Costing, and Scope 3 CO2e}
-Weight billing applies tare adjustment, parcel divisor $5000$, 10\,kg+ tapering, 7\,kg/CFT stacked PTL density, and landed risk expectation:
-\begin{equation}
-C_{\text{landed}} = C_{\text{mat}} + C_{\text{dunnage}} + C_{\text{freight}} + 0.30 \cdot P(\text{Damage}) \cdot V_d
-\end{equation}
-
-\section{Experimental Evaluation and Ablation Studies}
-
-\begin{table}[t]
-\centering
-\caption{Calibrated Damage Classifier Performance ($n = 2,400$ Test)}
-\begin{tabular}{lccccc}
-\toprule
-Model & Acc. & F1 & ROC-AUC & AP & Brier \\
-\midrule
-XGBoost & 0.8896 & 0.6908 & 0.8919 & 0.7684 & 0.0848 \\
-RandomForest & 0.8862 & 0.6723 & 0.8892 & 0.7615 & 0.0857 \\
-HistGradBoost & 0.8862 & 0.6746 & 0.8827 & 0.7472 & 0.0879 \\
-\bottomrule
-\end{tabular}
-\end{table}
+ISTA 3A padding $c_i \in {0, 0.5, 1.5, 2.0, 2.5, 3.0\}$ cm expands bounding footprints before CP-SAT disjunctive placement and upright z-axis locking minimize $\sum_i (2z_i + x_i + y_i) + \lambda_{\text{top}} z_i m_i$, falling back to Shelf-FFD above $35$ units.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\linewidth]{figures/fig2_ml_metrics.png}
-\caption{Discrimination and isotonic calibration error across candidate classifiers.}
+\includegraphics[width=\columnwidth]{figures/fig1_architecture.png}
+\caption{PackOptima deterministic pipeline with isolated LLM narration.}
 \end{figure}
+
+\section{Physics-Informed Damage Model and Freight Engine}
+Three calibrated classifiers evaluate 15 physical descriptors (Table~\ref{tab:ml}). Calibrated XGBoost achieves ROC-AUC $= 0.8919$ and Brier $= 0.0848$ versus RandomForest (0.8892) and HistGradientBoosting (0.8827). Freight billing uses dimensional weight, PIN zones A--E ($1.0\times$ to $2.85\times$), and Scope 3 CO2e emission intensity ($0.068$--$0.602$ kg CO2e/tonne-km plus $0.92$ or $1.85$ kg CO2e/kg tare).
 
 \begin{table}[t]
 \centering
-\caption{200-Cart Empirical Baseline Comparison (Wilcoxon $p < 0.001$)}
+\caption{Calibrated Classifier Test Performance}
+\label{tab:ml}
 \begin{tabular}{lcccc}
 \toprule
-Method & Util \% & Mean Cost & Damage Risk & $p$-val \\
+Model & Accuracy & F1 & ROC-AUC & Brier \\
 \midrule
-Proposed (Ours) & 28.6\% & Rs.\ 1,139 & 0.112 & --- \\
-Always-Largest & 1.2\% & Rs.\ 11,264 & 0.200 & $<0.001$ \\
-Simulated Manual & 46.0\% & Rs.\ 635 & 0.437 & $<0.001$ \\
-No-Grouping & 31.3\% & Rs.\ 645 & 0.321 & $<0.001$ \\
+XGBoost & 0.8896 & 0.6908 & 0.8919 & 0.0848 \\
+RandomForest & 0.8862 & 0.6723 & 0.8892 & 0.0857 \\
+HistGB & 0.8862 & 0.6746 & 0.8827 & 0.0879 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
-\centering
-\includegraphics[width=\linewidth]{figures/fig3_baseline_comparison.png}
-\caption{200-cart cost, damage risk, and utilization comparison across baselines.}
-\end{figure}
+\section{System Architecture and Dual-Provider Advisory}
+FastAPI and SQLAlchemy 2.0 persist four SQLite entities while supporting live switching between Gemini 2.5 Flash/Pro and Qwen2.5-1.5B/3B/7B Instruct without modifying any numerical optimization outputs.
 
-\section{Enterprise Deployment and Conclusion}
-PackOptima ships with a 4-table SQLAlchemy database, custom warehouse container registration, printable HTML/Markdown dispatch manifests, interactive HTML5 3D load visualization, closed-loop QA feedback, and 36 automated \texttt{pytest} checks.
+\section{Empirical Evaluation and Ablations}
+Across 200 stratified carts, Proposed limits mean damage risk to $0.112 \pm 0.088$ at mean cost Rs. $1139$, outperforming Always Largest (util. $1.2\%$, Rs. $11264$), Simulated Manual ($0.437$), and No Grouping ($0.321$, $+185.6\%$, Wilcoxon $p = 7.59e-21$). Parametric $\pm 25\%$ sensitivity peaks for ISTA cushion adequacy (elasticity $0.678$).
 
-\begin{thebibliography}{5}
-\bibitem{ista3a} ISTA, ``Procedure 3A: Packaged-Products for Parcel Delivery System Shipment 70 kg or Less,'' 2018.
-\bibitem{is2771} Bureau of Indian Standards, ``Corrugated Fibreboard Boxes — IS 2771 (Part 1): 2022,'' New Delhi, 2022.
-\bibitem{martello2000} S. Martello, D. Pisinger, and D. Vigo, ``The three-dimensional bin packing problem,'' \emph{Oper. Res.}, vol. 48, no. 2, 2000.
-\bibitem{ortools} L. Perron and V. Furnon, ``Google OR-Tools CP-SAT Solver v9.7,'' 2023.
-\bibitem{chen2016} T. Chen and C. Guestrin, ``XGBoost: A scalable tree boosting system,'' in \emph{Proc. ACM SIGKDD}, 2016.
-\bibitem{zadrozny2002} B. Zadrozny and C. Elkan, ``Transforming classifier scores into accurate multiclass probability estimates,'' in \emph{Proc. ACM SIGKDD}, 2002.
-\end{thebibliography}
+\section{Conclusion}
+PackOptima validates statistically significant breakage mitigation, calibrated risk scoring, and carbon-aware Indian tariff estimation under strict LLM output isolation.
 
 \end{document}

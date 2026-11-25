@@ -1,17 +1,26 @@
-# PackOptima Enterprise (PS116 v2.5) — Complete Technical Project Report
+# PackOptima: Physics-Informed Three-Dimensional Bin Packing, Calibrated Transit Damage Risk Estimation, and Carbon-Aware Freight Optimization (PS-116)
 
-## 1. Executive Summary
-PackOptima Enterprise unifies **cargo compatibility segregation**, **OR-Tools CP-SAT 3D bin packing** with **ISTA 3A cushioning**, **BIS IS 2771:2022 container specifications**, **Indian Zone A–E PIN routing**, **Scope 3 carbon accounting**, **isotonic 15-feature ML transit-damage estimation** (XGBoost: ROC-AUC `0.8919`, Brier `0.0848`), **SQLAlchemy relational persistence**, and a **strictly post-hoc Gemini 2.5 / Hugging Face Qwen2.5 explanation layer**.
+**Author:** P Yathin Machaiah  
+**Department:** Department of CSE - Cyber Security  
+**University:** Dayananda Sagar University  
+**Email:** p.yathinmachaiah18@gmail.com
 
-## 2. Empirical Results Summary (200 Carts)
-| Method | Avg Utilization | Avg Direct Cost | Avg Damage Risk | Wilcoxon p-value |
-| :--- | :--- | :--- | :--- | :--- |
-| Proposed Pipeline (Ours) | 28.6% | Rs. 1,138.63 | 0.112 | — |
-| Always-Largest-Box | 1.2% | Rs. 11,264.18 | 0.200 | p < 0.001 |
-| Simulated Manual | 46.0% | Rs. 634.58 | 0.437 | p < 0.001 |
-| No-Grouping Baseline | 31.3% | Rs. 644.97 | 0.321 | p < 0.001 |
+---
 
-## 3. Publications & Artifacts Generated
-- Strict IEEE Paper PDF: `docs/IEEE_Research_Paper_PackOptima_PS116.pdf`
-- Strict IEEE LaTeX Source: `docs/IEEE_Research_Paper_PackOptima_PS116.tex`
-- 10-Page Technical Report PDF: `docs/Project_Report_10Pages_PackOptima_PS116.pdf`
+## Abstract
+
+Automated e-commerce fulfillment confronts competing geometric, mechanical, environmental, and financial constraints when consolidating multi-SKU orders. This technical report details PackOptima (PS-116), unifying compatibility-constrained partitioning across 10 SKU categories, OR-Tools CP-SAT three-dimensional bin packing over 14 BIS IS 2771 (Part 1): 2022 and cold-chain container tiers with ISTA 3A cushion allowances (`Shelf-FFD` fallback for `n > 35`), isotonic-calibrated `XGBoost` transit damage estimation trained over `12,000` shipments (`ROC-AUC = 0.8919`, `Brier = 0.0848`), Indian PIN-zone (Zones A–E) freight pricing, Scope 3 carbon accounting, SQLite relational persistence, and strictly isolated Gemini 2.5 / Qwen2.5 narrative rendering.
+
+---
+
+## Key Empirical Findings
+
+| Metric / Model | Proposed / XGBoost | Comparison Baseline | Notes |
+|---|---:|---:|---|
+| Damage Classifier Test ROC-AUC | 0.8919 | RF 0.8892 / HGB 0.8827 | 3-fold isotonic calibration (`n_test = 2,400`) |
+| Damage Classifier Brier Score | 0.0848 | RF 0.0857 / HGB 0.0879 | Lower indicates superior calibration |
+| 200-Cart Mean Damage Risk | 0.112 | No Grouping 0.321 / Manual 0.437 | Wilcoxon p = 7.59e-21 |
+| 200-Cart Mean Volumetric Utilization | 28.6% | Always Largest 1.2% | Reduces dimensional surcharge |
+| Compatibility Grouping Ablation | 0.112 (ON) | 0.321 (OFF) | +185.6% risk shift |
+| GenAI Narrative Isolation Delta | 0.00% | N/A | Zero numerical solver perturbation |
+| Baseline Sensitivity Risk | 0.2870 | ISTA Cushion Elast. 0.678 | +/-25% perturbation sensitivity peak |

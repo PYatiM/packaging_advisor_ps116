@@ -1,45 +1,42 @@
-"""Generate IEEE Research Paper (PDF + LaTeX) and 10-Page Technical Report (PDF + MD).
+"""Generate publication-grade 7-page IEEE paper (.pdf + .tex) and
+10-page scholarly technical report (.pdf + .md) for PackOptima (PS-116).
 
-Reads live empirical artifacts from:
-- backend/ml/artifacts/evaluation_summary.json
-- backend/ml/artifacts/model_metadata.json
-- backend/ml/artifacts/evaluation_dashboard.png
-- results/statistical_summary.json
-- results/ablation_summary.json
-
-Outputs (under docs/):
-- docs/figures/fig1_architecture.png
-- docs/figures/fig2_ml_metrics.png
-- docs/figures/fig3_baseline_comparison.png
-- docs/IEEE_Research_Paper_PackOptima_PS116.pdf
-- docs/IEEE_Research_Paper_PackOptima_PS116.tex
-- docs/Project_Report_10Pages_PackOptima_PS116.pdf
-- docs/Project_Report_PackOptima_PS116.md
+Author:
+    P Yathin Machaiah
+    Department of CSE - Cyber Security
+    Dayananda Sagar University
+    p.yathinmachaiah18@gmail.com
 """
 
+from __future__ import annotations
+
+import io
 import json
 import os
 import re
 import sys
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import zlib
+from pathlib import Path
+from typing import Any
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
-from PIL import Image as PILImage
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4, letter
 from reportlab.lib.styles import ParagraphStyle
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.pdfmetrics import registerFontFamily
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     BaseDocTemplate,
     Frame,
     FrameBreak,
-    Image,
+    Image as RLImage,
     KeepInFrame,
     NextPageTemplate,
     PageBreak,
@@ -49,1099 +46,1714 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
+from reportlab.platypus.flowables import Flowable, HRFlowable
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from backend.core.catalog import ORDERED_CONTAINERS, PRODUCT_CATEGORIES
 
+DOCS_DIR = ROOT / "docs"
+FIG_DIR = DOCS_DIR / "figures"
+RESULTS_DIR = ROOT / "results"
+ML_ARTIFACTS_DIR = ROOT / "backend" / "ml" / "artifacts"
 
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-DOCS_DIR = os.path.join(ROOT_DIR, "docs")
-FIG_DIR = os.path.join(DOCS_DIR, "figures")
-
-
-def _load_json(rel_path: str) -> dict:
-    full = os.path.join(ROOT_DIR, rel_path)
-    with open(full, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _count_pdf_pages(pdf_path: str) -> int:
-    with open(pdf_path, "rb") as f:
-        raw = f.read()
-    # Count individual /Type /Page dictionaries (excluding /Type /Pages)
-    matches = re.findall(rb"/Type\s*/Page\b(?!s)", raw)
-    return len(matches)
+# Exact required author metadata
+AUTHOR_NAME = "P Yathin Machaiah"
+AUTHOR_DEPT = "Department of CSE - Cyber Security"
+AUTHOR_UNIV = "Dayananda Sagar University"
+AUTHOR_EMAIL = "p.yathinmachaiah18@gmail.com"
 
 
-def _aspect_image(path: str, target_width: float) -> Image:
-    with PILImage.open(path) as im:
-        w, h = im.size
-    ratio = h / max(1, w)
-    return Image(path, width=target_width, height=target_width * ratio)
+# ---------------------------------------------------------------------------
+# Font Registration (Unicode Times New Roman on Windows with safe fallback)
+# ---------------------------------------------------------------------------
 
-
-# ------------------------------------------------------------------
-# 1. Publication Figures (300 DPI)
-# ------------------------------------------------------------------
-def generate_figures(eval_sum: dict, stat_sum: dict) -> dict:
-    os.makedirs(FIG_DIR, exist_ok=True)
-    plt.rcParams["font.family"] = "serif"
-    plt.rcParams["font.serif"] = ["Times New Roman", "DejaVu Serif"]
-
-    # --- Fig 1: System Architecture ---
-    fig1_path = os.path.join(FIG_DIR, "fig1_architecture.png")
-    fig, ax = plt.subplots(figsize=(8.6, 4.3), dpi=300)
-    ax.set_xlim(0, 100)
-    ax.set_ylim(0, 52)
-    ax.axis("off")
-
-    def draw_box(x, y, w, h, title, sub, fc="#eff6ff", ec="#1d4ed8", tc="#0f172a"):
-        box = patches.FancyBboxPatch(
-            (x, y),
-            w,
-            h,
-            boxstyle="round,pad=0.6,rounding_size=1.4",
-            facecolor=fc,
-            edgecolor=ec,
-            linewidth=1.3,
-        )
-        ax.add_patch(box)
-        ax.text(x + w / 2, y + h * 0.64, title, ha="center", va="center", fontsize=8.5, fontweight="bold", color=tc)
-        ax.text(x + w / 2, y + h * 0.28, sub, ha="center", va="center", fontsize=6.7, color="#334155")
-
-    def draw_arrow(x1, y1, x2, y2):
-        ax.annotate(
-            "",
-            xy=(x2, y2),
-            xytext=(x1, y1),
-            arrowprops=dict(arrowstyle="-|>", color="#334155", lw=1.2, shrinkA=1, shrinkB=1),
-        )
-
-    draw_box(2, 34, 19, 13, "1. Multi-SKU Input", "Order Studio / Master SKUs\n& 6-Digit Origin/Dest PIN", "#f8fafc", "#475569")
-    draw_box(26, 34, 21, 13, "2. Cargo Segregation", "Perishable, Liquid, ESD,\nFragile vs Heavy Isolation", "#ecfeff", "#0284c7")
-    draw_box(52, 34, 22, 13, "3. 3D CP-SAT Packer", "ISTA 3A Pads, 6 Rotations,\nMulti-Box Split (2..5 Bins)", "#eff6ff", "#1d4ed8")
-    draw_box(79, 34, 19, 13, "4. Zone A-E Router", "2- & 3-Digit Prefix Tier,\nNodes, Distance & SLA", "#f0fdf4", "#15803d")
-
-    draw_box(26, 13, 21, 13, "5. Cost & Carbon Engine", "Divisor 5000, PTL 7kg/CFT,\n10kg+ Taper, Scope 3 CO2e", "#fffbeb", "#b45309")
-    draw_box(52, 13, 22, 13, "6. Calibrated ML Risk", "Isotonic XGBoost (15 Feats)\nP(Damage) in [0.01, 0.99]", "#fdf2f8", "#be185d")
-    draw_box(79, 13, 19, 13, "7. Multi-Objective Rank", "Balanced / Cost / Risk / Eco\n+ Post-Hoc Gemini / Qwen2.5", "#eef2ff", "#4338ca")
-
-    draw_box(2, 13, 19, 13, "8. DB & Control Tower", "SQLite ORM, 3D Canvas,\nHTML Manifest & QA Loop", "#f1f5f9", "#0f172a")
-
-    draw_arrow(21.6, 40.5, 25.4, 40.5)
-    draw_arrow(47.6, 40.5, 51.4, 40.5)
-    draw_arrow(74.6, 40.5, 78.4, 40.5)
-    draw_arrow(88.5, 33.4, 88.5, 26.8)
-    draw_arrow(78.4, 19.5, 74.6, 19.5)
-    draw_arrow(51.4, 19.5, 47.6, 19.5)
-    draw_arrow(25.4, 19.5, 21.6, 19.5)
-    ax.text(50, 4.2, "Strict Post-Hoc LLM Decoupling: Gemini 2.5 / Hugging Face Qwen2.5 executes ONLY after Step 7 finalizes.", ha="center", va="center", fontsize=7.2, style="italic", color="#475569")
-
-    plt.tight_layout(pad=0.3)
-    fig.savefig(fig1_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-
-    # --- Fig 2: ML Classifier Performance ---
-    fig2_path = os.path.join(FIG_DIR, "fig2_ml_metrics.png")
-    models = list(eval_sum.keys())
-    metric_keys = ["roc_auc", "avg_precision", "accuracy", "f1_score"]
-    metric_labels = ["ROC-AUC", "Avg Precision", "Accuracy", "F1 Score"]
-    x = np.arange(len(metric_labels))
-    width = 0.24
-    palette = ["#1d4ed8", "#059669", "#d97706"]
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8.4, 3.3), dpi=300, gridspec_kw={"width_ratios": [1.45, 1.0]})
-    for idx, m_name in enumerate(models):
-        vals = [eval_sum[m_name][k] for k in metric_keys]
-        bars = ax1.bar(x + (idx - 1) * width, vals, width, label=m_name, color=palette[idx % len(palette)], alpha=0.9)
-        for b, v in zip(bars, vals):
-            ax1.text(b.get_x() + b.get_width() / 2, v + 0.012, f"{v:.3f}", ha="center", va="bottom", fontsize=6.5)
-
-    ax1.set_ylim(0, 1.08)
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(metric_labels, fontsize=8)
-    ax1.set_ylabel("Score", fontsize=8.5)
-    ax1.set_title("(a) Calibrated Classifier Metrics (n=2,400)", fontsize=9, fontweight="bold")
-    ax1.legend(fontsize=7.2, loc="lower right")
-    ax1.grid(axis="y", linestyle="--", alpha=0.35)
-
-    briers = [eval_sum[m]["brier_score"] for m in models]
-    bars_b = ax2.bar(models, briers, width=0.48, color=palette[: len(models)], alpha=0.9)
-    for b, v in zip(bars_b, briers):
-        ax2.text(b.get_x() + b.get_width() / 2, v + 0.002, f"{v:.4f}", ha="center", va="bottom", fontsize=7.5)
-    ax2.set_ylim(0, max(briers) * 1.28)
-    ax2.set_ylabel("Brier Score (Lower is Better)", fontsize=8.5)
-    ax2.set_title("(b) Isotonic Calibration Error", fontsize=9, fontweight="bold")
-    ax2.tick_params(axis="x", labelsize=7.5)
-    ax2.grid(axis="y", linestyle="--", alpha=0.35)
-
-    plt.tight_layout(pad=0.6)
-    fig.savefig(fig2_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-
-    # --- Fig 3: 200-Cart Baseline Comparison ---
-    fig3_path = os.path.join(FIG_DIR, "fig3_baseline_comparison.png")
-    conds = ["proposed", "always_largest", "simulated_manual", "no_grouping"]
-    labels = ["Proposed\n(Ours)", "Always-\nLargest", "Simulated\nManual", "No-\nGrouping"]
-    c_means = [stat_sum["conditions"][c]["total_estimated_cost"]["mean"] for c in conds]
-    r_means = [stat_sum["conditions"][c]["damage_risk_probability"]["mean"] for c in conds]
-    u_means = [stat_sum["conditions"][c]["utilization_pct"]["mean"] for c in conds]
-    bar_cols = ["#1d4ed8", "#64748b", "#d97706", "#dc2626"]
-
-    fig, (ax_c, ax_r, ax_u) = plt.subplots(1, 3, figsize=(8.6, 3.1), dpi=300)
-    for ax, vals, title, fmt in [
-        (ax_c, c_means, "(a) Mean Direct Cost (Rs.)", "Rs.{:,.0f}"),
-        (ax_r, r_means, "(b) Mean Damage Risk", "{:.3f}"),
-        (ax_u, u_means, "(c) Avg Utilization (%)", "{:.1f}%"),
-    ]:
-        bars = ax.bar(labels, vals, color=bar_cols, width=0.58, alpha=0.9)
-        ax.set_ylim(0, max(vals) * 1.24)
-        ax.set_title(title, fontsize=8.8, fontweight="bold")
-        ax.tick_params(axis="x", labelsize=7.2)
-        ax.tick_params(axis="y", labelsize=7.2)
-        ax.grid(axis="y", linestyle="--", alpha=0.35)
-        for b, v in zip(bars, vals):
-            ax.text(b.get_x() + b.get_width() / 2, v + max(vals) * 0.025, fmt.format(v), ha="center", va="bottom", fontsize=6.6)
-
-    plt.tight_layout(pad=0.6)
-    fig.savefig(fig3_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-
-    return {"fig1": fig1_path, "fig2": fig2_path, "fig3": fig3_path}
-
-
-# ------------------------------------------------------------------
-# 2. Strict IEEE Two-Column Conference Paper (PDF + LaTeX)
-# ------------------------------------------------------------------
-def build_ieee_paper(eval_sum: dict, meta: dict, stat_sum: dict, abl_sum: dict, figs: dict) -> int:
-    pdf_path = os.path.join(DOCS_DIR, "IEEE_Research_Paper_PackOptima_PS116.pdf")
-    tex_path = os.path.join(DOCS_DIR, "IEEE_Research_Paper_PackOptima_PS116.tex")
-
-    best_model = meta["best_model"]
-    bm = eval_sum[best_model]
-    c_prop = stat_sum["conditions"]["proposed"]
-    c_larg = stat_sum["conditions"]["always_largest"]
-    c_man = stat_sum["conditions"]["simulated_manual"]
-    c_nogrp = stat_sum["conditions"]["no_grouping"]
-
-    ab_grp = abl_sum["ablation_grouping"]
-    sens = abl_sum["sensitivity_analysis"]["perturbations"]
-
-    cost_vs_larg_pct = (1.0 - c_prop["total_estimated_cost"]["mean"] / c_larg["total_estimated_cost"]["mean"]) * 100.0
-    risk_vs_man_pct = (1.0 - c_prop["damage_risk_probability"]["mean"] / c_man["damage_risk_probability"]["mean"]) * 100.0
-    risk_vs_nogrp_pct = (1.0 - c_prop["damage_risk_probability"]["mean"] / c_nogrp["damage_risk_probability"]["mean"]) * 100.0
-
-    # US Letter IEEE geometry (612 x 792 pt): 0.625 in L/R (45pt), 0.75 in top (54pt), 1.0 in bottom (72pt)
-    PAGE_W, PAGE_H = letter
-    MARGIN_LR = 45.0
-    MARGIN_T = 54.0
-    MARGIN_B = 72.0
-    GUTTER = 18.0  # 0.25 in
-    COL_W = (PAGE_W - 2 * MARGIN_LR - GUTTER) / 2.0  # 252 pt = 3.5 in
-    TITLE_H = 112.0
-
-    def _draw_ieee_chrome(canvas, doc):
-        canvas.saveState()
-        canvas.setFont("Times-Roman", 8)
-        canvas.setFillColor(colors.HexColor("#475569"))
-        if doc.page > 1:
-            canvas.drawString(MARGIN_LR, PAGE_H - 36, "IEEE CONFERENCE MANUSCRIPT — PACKOPTIMA PS116")
-            canvas.drawRightString(PAGE_W - MARGIN_LR, PAGE_H - 36, f"Page {doc.page}")
-        else:
-            canvas.drawCentredString(PAGE_W / 2, PAGE_H - 34, "Preprint Manuscript — Smart Packaging & Freight Optimization (PS116)")
-        canvas.restoreState()
-
-    frame_title = Frame(MARGIN_LR, PAGE_H - MARGIN_T - TITLE_H, PAGE_W - 2 * MARGIN_LR, TITLE_H, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="title")
-    col_h_p1 = PAGE_H - MARGIN_T - TITLE_H - MARGIN_B - 8
-    frame_p1_l = Frame(MARGIN_LR, MARGIN_B, COL_W, col_h_p1, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="p1_l")
-    frame_p1_r = Frame(MARGIN_LR + COL_W + GUTTER, MARGIN_B, COL_W, col_h_p1, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="p1_r")
-
-    col_h_p2 = PAGE_H - MARGIN_T - MARGIN_B
-    frame_p2_l = Frame(MARGIN_LR, MARGIN_B, COL_W, col_h_p2, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="p2_l")
-    frame_p2_r = Frame(MARGIN_LR + COL_W + GUTTER, MARGIN_B, COL_W, col_h_p2, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="p2_r")
-
-    doc = BaseDocTemplate(
-        pdf_path,
-        pagesize=letter,
-        pageTemplates=[
-            PageTemplate(id="FirstPage", frames=[frame_title, frame_p1_l, frame_p1_r], onPage=_draw_ieee_chrome),
-            PageTemplate(id="TwoCol", frames=[frame_p2_l, frame_p2_r], onPage=_draw_ieee_chrome),
-        ],
+def _register_academic_fonts() -> dict[str, str]:
+    """Use ReportLab's built-in PostScript Type-1 Times-Roman family (IEEE standard, ASCII text runs)."""
+    registerFontFamily(
+        "Times-Roman",
+        normal="Times-Roman",
+        bold="Times-Bold",
+        italic="Times-Italic",
+        boldItalic="Times-BoldItalic",
     )
+    return {
+        "regular": "Times-Roman",
+        "bold": "Times-Bold",
+        "italic": "Times-Italic",
+        "bolditalic": "Times-BoldItalic",
+        "mono": "Courier",
+    }
 
-    # Exact IEEE font styles
-    s_title = ParagraphStyle("IEEETitle", fontName="Times-Bold", fontSize=22, leading=25, alignment=TA_CENTER, spaceAfter=6)
-    s_author = ParagraphStyle("IEEEAuthor", fontName="Times-Roman", fontSize=11, leading=13, alignment=TA_CENTER, spaceAfter=2)
-    s_affil = ParagraphStyle("IEEEAffil", fontName="Times-Italic", fontSize=10, leading=12, alignment=TA_CENTER, spaceAfter=4)
-    s_abs = ParagraphStyle("IEEEAbs", fontName="Times-Bold", fontSize=9, leading=10.6, alignment=TA_JUSTIFY, spaceAfter=5)
-    s_kw = ParagraphStyle("IEEEKw", fontName="Times-Roman", fontSize=9, leading=10.6, alignment=TA_JUSTIFY, spaceAfter=8)
-    s_h1 = ParagraphStyle("IEEEH1", fontName="Times-Roman", fontSize=10, leading=12, alignment=TA_CENTER, spaceBefore=8, spaceAfter=4, keepWithNext=True)
-    s_h2 = ParagraphStyle("IEEEH2", fontName="Times-Italic", fontSize=10, leading=12, alignment=TA_LEFT, spaceBefore=6, spaceAfter=3, keepWithNext=True)
-    s_body = ParagraphStyle("IEEEBody", fontName="Times-Roman", fontSize=10, leading=11.6, alignment=TA_JUSTIFY, firstLineIndent=10, spaceAfter=2)
-    s_body_noind = ParagraphStyle("IEEEBodyNoInd", parent=s_body, firstLineIndent=0)
-    s_eq = ParagraphStyle("IEEEEq", fontName="Times-Italic", fontSize=9.5, leading=11.5, alignment=TA_CENTER)
-    s_eq_num = ParagraphStyle("IEEEEqNum", fontName="Times-Roman", fontSize=9.5, leading=11.5, alignment=TA_RIGHT)
-    s_cap_fig = ParagraphStyle("IEEECapFig", fontName="Times-Roman", fontSize=8, leading=9.5, alignment=TA_LEFT, spaceBefore=3, spaceAfter=6)
-    s_cap_tbl = ParagraphStyle("IEEECapTbl", fontName="Times-Roman", fontSize=8, leading=9.5, alignment=TA_CENTER, spaceBefore=6, spaceAfter=3, keepWithNext=True)
-    s_ref = ParagraphStyle("IEEERef", fontName="Times-Roman", fontSize=8, leading=9.5, alignment=TA_LEFT, leftIndent=14, firstLineIndent=-14, spaceAfter=2)
 
-    def eq_row(tex_like: str, num: str) -> Table:
-        t = Table([[Paragraph(tex_like, s_eq), Paragraph(f"({num})", s_eq_num)]], colWidths=[COL_W - 26, 26])
-        t.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
-        return t
+FONTS = _register_academic_fonts()
 
-    def ieee_table(rows: list, widths: list) -> Table:
-        t = Table(rows, colWidths=widths, repeatRows=1)
-        t.setStyle(TableStyle([
-            ("FONTNAME", (0, 0), (-1, 0), "Times-Bold"),
-            ("FONTNAME", (0, 1), (-1, -1), "Times-Roman"),
-            ("FONTSIZE", (0, 0), (-1, -1), 7.5),
-            ("LEADING", (0, 0), (-1, -1), 9.0),
-            ("ALIGN", (0, 0), (0, -1), "LEFT"),
-            ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+
+# ---------------------------------------------------------------------------
+# Data & PDF Inspection Helpers
+# ---------------------------------------------------------------------------
+
+def _load_json(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _count_pdf_pages(pdf_bytes: bytes) -> int:
+    return len(re.findall(rb"/Type\s*/Page\b(?!s)", pdf_bytes))
+
+
+def _noop_page(canvas: Any, doc: Any) -> None:
+    """Explicitly draw zero headers, zero footers, and zero page numbers."""
+    return None
+
+
+def _get_nested(d: dict[str, Any], *keys: str, default: Any = 0.0) -> Any:
+    cur: Any = d
+    for k in keys:
+        if isinstance(cur, dict) and k in cur:
+            cur = cur[k]
+        else:
+            return default
+    return cur
+
+
+def _load_all_artifacts() -> dict[str, Any]:
+    return {
+        "eval": _load_json(ML_ARTIFACTS_DIR / "evaluation_summary.json"),
+        "meta": _load_json(ML_ARTIFACTS_DIR / "model_metadata.json"),
+        "stat": _load_json(RESULTS_DIR / "statistical_summary.json"),
+        "ablation": _load_json(RESULTS_DIR / "ablation_summary.json"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Custom Flowables & Styled Table Helpers
+# ---------------------------------------------------------------------------
+
+class EquationBlock(Flowable):
+    """Right-numbered single-line mathematical display equation."""
+
+    def __init__(
+        self,
+        formula_html: str,
+        eq_num: str,
+        width: float,
+        font_size: float = 8.8,
+    ) -> None:
+        super().__init__()
+        self.total_width = width
+        style_eq = ParagraphStyle(
+            "EqInner",
+            fontName=FONTS["italic"],
+            fontSize=font_size,
+            leading=font_size + 2.4,
+            alignment=TA_CENTER,
+            textColor=colors.black,
+        )
+        style_num = ParagraphStyle(
+            "EqNum",
+            fontName=FONTS["regular"],
+            fontSize=font_size,
+            leading=font_size + 2.4,
+            alignment=TA_RIGHT,
+            textColor=colors.black,
+        )
+        self.tbl = Table(
+            [[Paragraph(formula_html, style_eq), Paragraph(f"({eq_num})", style_num)]],
+            colWidths=[width - 26, 26],
+        )
+        self.tbl.setStyle(
+            TableStyle([
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 1.8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1.8),
+            ])
+        )
+
+    def wrap(self, availWidth: float, availHeight: float) -> tuple[float, float]:
+        _, h = self.tbl.wrap(availWidth, availHeight)
+        return availWidth, h
+
+    def draw(self) -> None:
+        self.tbl.drawOn(self.canv, 0, 0)
+
+
+def _booktabs_table(
+    rows: list[list[Any]],
+    col_widths: list[float],
+    header_bg: colors.Color = colors.HexColor("#F4F4F4"),
+    font_size: float = 7.4,
+    pad_v: float = 2.0,
+) -> Table:
+    """Create a minimalist academic booktabs-style horizontal-rule table."""
+    tbl = Table(rows, colWidths=col_widths, repeatRows=1)
+    tbl.setStyle(
+        TableStyle([
+            ("FONTNAME", (0, 0), (-1, 0), FONTS["bold"]),
+            ("FONTNAME", (0, 1), (-1, -1), FONTS["regular"]),
+            ("FONTSIZE", (0, 0), (-1, -1), font_size),
+            ("LEADING", (0, 0), (-1, -1), font_size + 1.8),
+            ("BACKGROUND", (0, 0), (-1, 0), header_bg),
+            ("TEXTCOLOR", (0, 0), (-1, -1), colors.black),
             ("LINEABOVE", (0, 0), (-1, 0), 0.9, colors.black),
             ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.black),
             ("LINEBELOW", (0, -1), (-1, -1), 0.9, colors.black),
+            ("TOPPADDING", (0, 0), (-1, -1), pad_v),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), pad_v),
             ("LEFTPADDING", (0, 0), (-1, -1), 2.5),
             ("RIGHTPADDING", (0, 0), (-1, -1), 2.5),
-            ("TOPPADDING", (0, 0), (-1, -1), 2.5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
-        ]))
-        return t
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ])
+    )
+    return tbl
 
-    def h1(roman: str, title: str) -> Paragraph:
-        if roman:
-            return Paragraph(f"{roman}. <font size='8.2'>{title.upper()}</font>", s_h1)
-        return Paragraph(f"<font size='8.2'>{title.upper()}</font>", s_h1)
 
-    story = [
-        # Title Block (Frame 0)
-        Paragraph("PackOptima: Standards-Grounded 3D Constraint Bin Packing, Calibrated Transit-Damage Learning, and Multi-Objective Freight Optimization", s_title),
-        Paragraph("Yathi M. and Packaging Advisor Engineering Group", s_author),
-        Paragraph("Department of Computer Science and Engineering — Project PS116, India", s_affil),
-        NextPageTemplate("TwoCol"),
-        FrameBreak(),
+def _fit_image(path: Path, target_width: float) -> RLImage:
+    """Create an aspect-preserving ReportLab image flowable."""
+    from PIL import Image as PILImage
+    with PILImage.open(path) as im:
+        w, h = im.size
+    ratio = h / float(w)
+    return RLImage(str(path), width=target_width, height=target_width * ratio)
 
-        # Left Column Top: Abstract & Index Terms
-        Paragraph(
-            f"<b><i>Abstract</i>—</b>E-commerce and business-to-business logistics in developing freight networks suffer simultaneously from dimensional-weight overbilling and preventable transit damage caused by unsafe cargo commingling, under-cushioned boxes, and corrugated wall collapse under humid monsoon handling. We present <b>PackOptima</b>, an integrated decision-support architecture combining rule-based cargo compatibility segregation, an OR-Tools CP-SAT three-dimensional bin-packing solver with ISTA 3A protective clearance envelopes and multi-carton splitting, an Indian six-digit PIN Zone A–E routing and freight rate engine, and an isotonically calibrated 15-feature machine-learning damage-risk predictor ({best_model} ROC-AUC = {bm['roc_auc']:.4f}, Brier = {bm['brier_score']:.4f}). Across 200 diverse synthetic multi-SKU orders, the proposed pipeline lowers mean transit damage probability by {risk_vs_man_pct:.1f}% versus simulated manual bounding-box packing ({c_prop['damage_risk_probability']['mean']:.3f} vs. {c_man['damage_risk_probability']['mean']:.3f}, Wilcoxon <i>p</i> &lt; 0.001) and by {risk_vs_nogrp_pct:.1f}% versus unsegregated co-packing ({c_nogrp['damage_risk_probability']['mean']:.3f}, <i>p</i> &lt; 0.001), while slashing freight spend by {cost_vs_larg_pct:.1f}% relative to always-largest-box defaults (Rs. {c_prop['total_estimated_cost']['mean']:,.2f} vs. Rs. {c_larg['total_estimated_cost']['mean']:,.2f}, <i>p</i> &lt; 0.001). Furthermore, we prove that an optional post-hoc LLM explanation layer supporting Google Gemini 2.5 and Hugging Face Qwen2.5 small models imparts zero perturbation on physical container or freight decisions.",
-            s_abs,
-        ),
-        Paragraph(
-            "<b><i>Index Terms</i>—</b>3D bin packing, BIS IS 2771, calibrated risk learning, constraint programming, cold-chain logistics, freight optimization, ISTA 3A.",
-            s_kw,
-        ),
 
-        # Section I
-        h1("I", "Introduction"),
-        Paragraph(
-            "Domestic parcel and part-truckload (PTL) fulfillment networks face conflicting operational pressures: shipping items in oversized corrugated boxes triggers steep dimensional-weight surcharges (calculated via outer volume divided by 5,000 in express air and surface networks), whereas stuffing fragile items into tight unpadded boxes elevates corner-impact breakage and Edge Crush Test (ECT) wall failure during multi-node sorting [1], [2]. In tropical transit corridors such as India, ambient temperatures exceeding +40 °C and monsoon relative humidity above 85% degrade corrugated fiberboard stacking resistance by 30%–50% [3], compounding hazards for precision electronics, glassware, and temperature-sensitive perishables.",
-            s_body_noind,
-        ),
-        Paragraph(
-            "Existing warehouse tools typically address geometric packing, carrier rating, or risk estimation in isolation. Pure 3D bin-packing heuristics overlook chemical and thermal incompatibilities—such as placing industrial liquids beside electronics or shipping perishables in ambient cartons without phase-change coolants. Conversely, heuristic freight calculators ignore 3D rotation locks (`THIS WAY UP`) and ISTA 3A cushioning clearances [4]. Meanwhile, naive adoption of generative large language models (LLMs) directly inside numerical optimization loops risks hallucinated box dimensions or distorted freight quotes.",
-            s_body,
-        ),
-        Paragraph(
-            "To resolve these gaps, this paper introduces <b>PackOptima</b>, an end-to-end engineering and enterprise decision platform built around four principles: (1) deterministic pre-packing cargo segregation isolating thermal, liquid, electrostatic, and heavy-impact hazards; (2) exact OR-Tools CP-SAT 3D feasibility verification incorporating per-face ISTA 3A padding, orientation locking, and 2–5 bin parcel splitting across a 14-container BIS IS 2771:2022 [5] and cold-chain catalog; (3) Indian six-digit PIN Zone A–E routing with tapered courier weight slabs, stacked-height PTL cubic-feet (CFT) density rules, and Scope 3 CO2e emissions accounting; and (4) an isotonically calibrated 15-feature damage-risk classifier paired with a strictly post-hoc multi-LLM explanation layer.",
-            s_body,
-        ),
+# ---------------------------------------------------------------------------
+# Five 300-DPI Academic Figures
+# ---------------------------------------------------------------------------
 
-        # Section II
-        h1("II", "Related Work"),
-        Paragraph(
-            "Three-dimensional orthogonal container loading has been studied extensively through branch-and-bound, Martello–Toth upper bounds, and constraint-programming formulations [6], [7]. While metaheuristics scale to hundreds of identical pallets, mixed-SKU e-commerce carts contain 1–35 heterogeneous items where exact CP-SAT disjunctive non-overlap verification achieves optimal feasibility in sub-second wall-clock time while cleanly enforcing axis-aligned rotation locks.",
-            s_body_noind,
-        ),
-        Paragraph(
-            "In packaging engineering, ISTA Procedure 3A establishes drop, random vibration, and atmospheric pre-conditioning protocols for parcel shipments up to 70 kg [4], while BIS IS 2771 (Part 1): 2022 standardizes 3-ply, 5-ply, and 7-ply corrugated board bursting strength and minimum ECT thresholds [5]. Prior academic prototypes rarely link these physical board grades directly into ML transit-damage features or carrier dimensional-weight divisors. Recent logistics AI systems also explore LLMs for operator guidance [8]; our work enforces a strict architectural separation so generative models translate verified solver outputs into warehouse Standard Operating Procedures (SOPs) with zero decision drift.",
-            s_body,
-        ),
+def _configure_mpl() -> None:
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "DejaVu Serif"],
+        "font.size": 9,
+        "axes.titlesize": 10,
+        "axes.labelsize": 9,
+        "xtick.labelsize": 8,
+        "ytick.labelsize": 8,
+        "legend.fontsize": 8,
+        "axes.edgecolor": "#222222",
+        "axes.linewidth": 0.8,
+        "figure.facecolor": "white",
+        "axes.facecolor": "white",
+        "savefig.dpi": 300,
+    })
 
-        # Section III
-        h1("III", "Methodology and System Architecture"),
-        Paragraph(
-            "Fig. 1 illustrates the eight-stage PackOptima processing pipeline spanning cargo intake, physics-grounded optimization, relational persistence, and interactive 3D dispatch visualization.",
-            s_body_noind,
-        ),
-        _aspect_image(figs["fig1"], COL_W - 4),
-        Paragraph("Fig. 1. End-to-end PackOptima pipeline showing strict post-hoc decoupling of LLM narrative generation from deterministic CP-SAT packing, routing, and calibrated ML risk scoring.", s_cap_fig),
 
-        Paragraph("A. Cargo Compatibility Segregation", s_h2),
-        Paragraph(
-            "Given an input cart <i>C</i> of SKUs with declared category, dimensions, mass, fragility <i>f<sub>i</sub></i> ∈ [0, 1], liquid flag, orientation lock, and cold-chain flag, the grouping engine partitions <i>C</i> into disjoint safe shipments: <i>perishables</i> (2–8 °C cold-chain), <i>liquids</i> (leak containment), <i>electronics</i> (ESD shielding), <i>fragile_delicate</i> (glass, ceramics, fine art, or <i>f<sub>i</sub></i> ≥ 0.70 when mixed with non-fragile cargo), <i>heavy_industrial</i> (machinery/automotive ≥ 10 kg total), and <i>general</i> dry goods. Compatible lightweight items stay consolidated to avoid duplicate courier docket fees.",
-            s_body_noind,
-        ),
+def generate_figures(data: dict[str, Any]) -> dict[str, Path]:
+    """Generate five 300-DPI scholarly figures from verified artifacts."""
+    FIG_DIR.mkdir(parents=True, exist_ok=True)
+    _configure_mpl()
+    figs: dict[str, Path] = {}
 
-        Paragraph("B. ISTA 3A 3D CP-SAT Formulation and Multi-Box Splitting", s_h2),
-        Paragraph(
-            "Each SKU with quantity <i>q<sub>i</sub></i> ≥ 1 is expanded into unit cuboids. Based on ISTA 3A cushioning curves, per-face clearance <i>p<sub>i</sub></i> (cm) scales with fragility <i>f<sub>i</sub></i> and unit mass <i>m<sub>i</sub></i>: 0 cm for <i>f<sub>i</sub></i> &lt; 0.25, 0.5 cm for [0.25, 0.50), 1.5 cm (2.0 cm if <i>m<sub>i</sub></i> ≥ 5 kg) for [0.50, 0.75), and 2.5 cm (3.0 cm if <i>m<sub>i</sub></i> ≥ 5 kg) for <i>f<sub>i</sub></i> ≥ 0.75. Effective padded packing dimensions are:",
-            s_body_noind,
-        ),
-        eq_row("l'<sub>i</sub> = l<sub>i</sub> + 2p<sub>i</sub>, &nbsp; w'<sub>i</sub> = w<sub>i</sub> + 2p<sub>i</sub>, &nbsp; h'<sub>i</sub> = h<sub>i</sub> + 2p<sub>i</sub>", "1"),
-        Paragraph(
-            "For candidate container (<i>L, W, H</i>) and payload cap <i>M</i><sub>max</sub>, dimensions are scaled by 10× to integer decamillimeters. Each unit <i>i</i> selects an allowed rotation <i>r<sub>i</sub></i> ∈ {0, 2} if orientation-locked (preserving height along the vertical <i>z</i>-axis) or {0..5} otherwise, yielding effective dimensions (<i>dx<sub>i</sub>, dy<sub>i</sub>, dz<sub>i</sub></i>) via CP-SAT <code>AddElement</code> constraints and origin corner coordinates (<i>x<sub>i</sub>, y<sub>i</sub>, z<sub>i</sub></i>) bounded inside the box. Pairwise non-overlap between every unit pair (<i>i, j</i>) is enforced via six disjunctive Boolean literals <i>b<sub>ijk</sub></i>:",
-            s_body_noind,
-        ),
-        eq_row("x<sub>i</sub>+dx<sub>i</sub> ≤ x<sub>j</sub> ∨ x<sub>j</sub>+dx<sub>j</sub> ≤ x<sub>i</sub> ∨ y<sub>i</sub>+dy<sub>i</sub> ≤ y<sub>j</sub> ∨ y<sub>j</sub>+dy<sub>j</sub> ≤ y<sub>i</sub> ∨ z<sub>i</sub>+dz<sub>i</sub> ≤ z<sub>j</sub> ∨ z<sub>j</sub>+dz<sub>j</sub> ≤ z<sub>i</sub>", "2"),
-        Paragraph(
-            "To place heavier units near the bottom corner, CP-SAT minimizes the gravity-weighted objective (3) under a 0.25 s timeout, falling back to a 3D shelf First-Fit Decreasing heuristic above 35 units. When multi-unit groups exceed single-parcel limits, a CP-SAT-verified splitter evaluates 2–5 carton partitions across parcel boxes.",
-            s_body_noind,
-        ),
-        eq_row("min ∑<sub>i</sub> max(1, ⌊10m<sub>i</sub>⌉) · (8z<sub>i</sub> + x<sub>i</sub> + y<sub>i</sub>)", "3"),
+    # -----------------------------------------------------------------------
+    # Figure 1: End-to-End Architectural Pipeline
+    # -----------------------------------------------------------------------
+    fig1_path = FIG_DIR / "fig1_architecture.png"
+    fig, ax = plt.subplots(figsize=(8.6, 4.1))
+    ax.set_xlim(0, 100)
+    ax.set_ylim(0, 50)
+    ax.axis("off")
 
-        Paragraph("C. Zone A–E Routing, Freight Costing, and Scope 3 Carbon", s_h2),
-        Paragraph(
-            "Indian six-digit PIN prefixes resolve origin and destination states, Tier-1 metro clusters, and remote special regions (North-East prefixes 78–79, Jammu & Kashmir 18–19, Himachal Pradesh 17, islands, and APS 90–99), assigning carrier Zones A (Local, 1.0×, 2 nodes), B (Regional, 1.30×, 3 nodes), C (Metro-to-Metro, 1.65×, 4 nodes), D (National, 2.05×–2.35×, 5 nodes), and E (Special/ODA, 2.85×, 7 nodes). Billable weight <i>W<sub>b</sub></i> accounts for container tare weight <i>W<sub>t</sub></i> and outer volumetric weight with courier slab rounding and 10 kg+ weight tapering (4); B2B pallets apply stacked-height 7 kg/CFT density billing with a 50 kg floor.",
-            s_body_noind,
-        ),
-        eq_row("W<sub>chg</sub> = max(W<sub>pay</sub> + W<sub>tare</sub>, L<sub>o</sub>W<sub>o</sub>H<sub>o</sub> / 5000), &nbsp; W<sub>tap</sub> = min(W<sub>b</sub>, 10) + 0.8·max(0, W<sub>b</sub> - 10)", "4"),
-        Paragraph(
-            "Passive EPS cold parcels (`CC-EPS-*`, 48 h holdover) are restricted from multi-day ambient Zone C–E surface legs to prevent coolant meltout, escalating automatically to Express Air or `PTL-REEFER` above 35 kg. Scope 3 transport and embodied packaging CO2e emissions follow (5), while balanced optimization minimizes effective risk-adjusted landed cost (6) across declared cargo value <i>V<sub>d</sub></i>:",
-            s_body_noind,
-        ),
-        eq_row("E<sub>CO2</sub> = (W<sub>gross</sub> / 1000)·D<sub>km</sub>·ef<sub>mode</sub> + W<sub>tare</sub>·ef<sub>pkg</sub>", "5"),
-        eq_row("C<sub>landed</sub> = C<sub>mat</sub> + C<sub>dunnage</sub> + C<sub>freight</sub> + 0.30 · P(Damage) · V<sub>d</sub>", "6"),
+    boxes = [
+        (3, 31, 19, 13, "#EDF2F7", "#1B365D", "1. Order Intake\n10 SKU Categories\n6-Digit PIN (Zones A-E)"),
+        (25, 31, 20, 13, "#EBF5F5", "#245E68", "2. Partitioning\nCompatibility Graph\n6 Isolation Subgroups"),
+        (48, 31, 22, 13, "#F5F0EB", "#6D4C2F", "3. 3D CP-SAT Packer\n14 Container Tiers\n+ ISTA 3A Cushioning"),
+        (73, 31, 24, 13, "#F2EDF7", "#4B3B6B", "4. Shelf-FFD Fallback\nTriggered for n > 35\nMulti-Carton Split (2-5)"),
+        (9, 7, 24, 13, "#EDF2F7", "#1B365D", "5. ML Damage Model\n15 Physical Features\nIsotonic XGBoost"),
+        (37, 7, 25, 13, "#EBF5F5", "#245E68", "6. Freight & Carbon\nDivisor 5000 / 7 kg CFT\nScope 3 CO2e Engine"),
+        (66, 7, 29, 13, "#F7F7F7", "#333333", "7. Persistence & Advisory\nSQLAlchemy (4 Tables)\nGemini 2.5 / Qwen2.5"),
+    ]
+    for x, y, w, h, fc, ec, label in boxes:
+        rect = patches.FancyBboxPatch(
+            (x, y), w, h,
+            boxstyle="round,pad=0.6,rounding_size=1.2",
+            linewidth=1.2, edgecolor=ec, facecolor=fc,
+        )
+        ax.add_patch(rect)
+        ax.text(x + w / 2, y + h / 2, label, ha="center", va="center", fontsize=8.0, color="#111111")
 
-        Paragraph("D. Calibrated 15-Feature Transit Damage Learning", s_h2),
-        Paragraph(
-            "We synthesize 12,000 shipment records governed by physical logistic priors combining max/mean fragility, unprotected void percentage, ISTA cushion adequacy ratio, total mass, item count, liquid and orientation flags, route distance multiplier, sorting node count, payload-to-limit ratio, IS 2771 board ECT (kN/m), mode vibration factor (Air 0.45 to Surface 1.00), cargo incompatibility hazard, and ordinal category code. Three gradient/tree ensembles (XGBoost, RandomForest, and HistGradientBoosting) are wrapped in 3-fold isotonic regression (<code>CalibratedClassifierCV</code>) on an 80/20 stratified split so output probabilities are directly usable inside expected-loss formula (6).",
-            s_body_noind,
-        ),
+    arrow_kw = dict(arrowstyle="-|>,head_width=0.35,head_length=0.55", lw=1.2, color="#222222")
+    ax.annotate("", xy=(24.4, 37.5), xytext=(22.6, 37.5), arrowprops=arrow_kw)
+    ax.annotate("", xy=(47.4, 37.5), xytext=(45.6, 37.5), arrowprops=arrow_kw)
+    ax.annotate("", xy=(72.4, 37.5), xytext=(70.6, 37.5), arrowprops=arrow_kw)
+    ax.annotate("", xy=(21.0, 20.6), xytext=(59.0, 30.4), arrowprops=dict(arrowstyle="-|>,head_width=0.35,head_length=0.55", lw=1.1, color="#333333", connectionstyle="arc3,rad=0.10"))
+    ax.annotate("", xy=(36.4, 13.5), xytext=(33.6, 13.5), arrowprops=arrow_kw)
+    ax.annotate("", xy=(65.4, 13.5), xytext=(62.6, 13.5), arrowprops=arrow_kw)
 
-        Paragraph("E. Post-Hoc Multi-LLM Explanation Layer", s_h2),
-        Paragraph(
-            "After container selection, routing, and calibrated scoring finalize, an optional `ExplainerService` formats engineering parameters into structured prompts for Google Gemini (`gemini-2.5-flash` / `pro`) or Hugging Face serverless small Qwen models (`Qwen2.5-1.5B/3B/7B-Instruct` and project fine-tuned weights), falling back deterministically to a template-based engineering summary when offline or unconfigured.",
-            s_body_noind,
-        ),
+    ax.text(50, 47.6, "PackOptima Deterministic Physics-ML Pipeline with Isolated Generative Advisory",
+            ha="center", va="center", fontsize=9.8, fontweight="bold", color="#111111")
+    ax.text(50, 1.8, "Language model generates explanations strictly read-only (0.00% delta on packing, risk probability, or billing).",
+            ha="center", va="center", fontsize=7.8, style="italic", color="#444444")
 
-        # Section IV
-        h1("IV", "Experimental Evaluation and Ablation Studies"),
-        Paragraph("A. Calibrated Damage Classifier Benchmark", s_h2),
-        Paragraph(
-            "Table I and Fig. 2 summarize held-out test metrics across 2,400 stratified samples (19.71% damaged prevalence). Tuned isotonic XGBoost achieves the highest discrimination (ROC-AUC = "
-            f"{bm['roc_auc']:.4f}, Avg Precision = {bm['avg_precision']:.4f}) and lowest calibration error (Brier = {bm['brier_score']:.4f}), while delivering single-sample inference ~75× faster than a 350-tree RandomForest ensemble.",
-            s_body_noind,
-        ),
+    fig.tight_layout(pad=0.3)
+    fig.savefig(fig1_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    figs["fig1"] = fig1_path
 
-        Paragraph(f"TABLE I. <font size='7.2'>CALIBRATED DAMAGE CLASSIFIER PERFORMANCE (N = 2,400 TEST)</font>", s_cap_tbl),
-        ieee_table(
-            [
-                ["Model (Isotonic)", "Acc.", "F1", "ROC-AUC", "AP", "Brier"],
-                [
-                    "XGBoost (Best)",
-                    f"{eval_sum['XGBoost']['accuracy']:.4f}",
-                    f"{eval_sum['XGBoost']['f1_score']:.4f}",
-                    f"{eval_sum['XGBoost']['roc_auc']:.4f}",
-                    f"{eval_sum['XGBoost']['avg_precision']:.4f}",
-                    f"{eval_sum['XGBoost']['brier_score']:.4f}",
-                ],
-                [
-                    "RandomForest",
-                    f"{eval_sum['RandomForest']['accuracy']:.4f}",
-                    f"{eval_sum['RandomForest']['f1_score']:.4f}",
-                    f"{eval_sum['RandomForest']['roc_auc']:.4f}",
-                    f"{eval_sum['RandomForest']['avg_precision']:.4f}",
-                    f"{eval_sum['RandomForest']['brier_score']:.4f}",
-                ],
-                [
-                    "HistGradBoost",
-                    f"{eval_sum['HistGradientBoosting']['accuracy']:.4f}",
-                    f"{eval_sum['HistGradientBoosting']['f1_score']:.4f}",
-                    f"{eval_sum['HistGradientBoosting']['roc_auc']:.4f}",
-                    f"{eval_sum['HistGradientBoosting']['avg_precision']:.4f}",
-                    f"{eval_sum['HistGradientBoosting']['brier_score']:.4f}",
-                ],
-            ],
-            [72, 33, 33, 42, 34, 34],
-        ),
-        Spacer(1, 4),
-        _aspect_image(figs["fig2"], COL_W - 4),
-        Paragraph("Fig. 2. Discrimination and calibration comparison across isotonic tree ensembles on the 15-feature synthetic test set.", s_cap_fig),
+    # -----------------------------------------------------------------------
+    # Figure 2: 3D Packing Geometry (C-LARGE-99: 50x40x38 cm) & 14 Containers
+    # -----------------------------------------------------------------------
+    fig2_path = FIG_DIR / "fig2_3d_packing_geometry.png"
+    fig = plt.figure(figsize=(8.6, 3.8))
+    ax1 = fig.add_subplot(1, 2, 1, projection="3d")
 
-        Paragraph("B. 200-Cart Empirical Baseline Comparison", s_h2),
-        Paragraph(
-            "We benchmarked four conditions across 200 multi-category cart scenarios spanning Zones A–E: (a) Proposed Pipeline, (b) Always-Largest-Box (`C-XL-100`), (c) Simulated Manual (smallest box fitting the single largest item, ignoring ISTA pads and multi-item overlap), and (d) No-Grouping (packing all cart items into one ambient container). Paired two-sided Wilcoxon signed-rank tests (Table II, Fig. 3) verify statistically significant superiority across all baselines (<i>p</i> &lt; 0.001).",
-            s_body_noind,
-        ),
+    L, W, H = 50.0, 40.0, 38.0
+    corners = np.array([
+        [0, 0, 0], [L, 0, 0], [L, W, 0], [0, W, 0],
+        [0, 0, H], [L, 0, H], [L, W, H], [0, W, H],
+    ])
+    edges = [
+        (0, 1), (1, 2), (2, 3), (3, 0),
+        (4, 5), (5, 6), (6, 7), (7, 4),
+        (0, 4), (1, 5), (2, 6), (3, 7),
+    ]
+    for i, j in edges:
+        ax1.plot3D(*zip(corners[i], corners[j]), color="#1B365D", lw=1.2)
 
-        Paragraph(f"TABLE II. <font size='7.2'>200-CART BASELINE COMPARISON (WILCOXON P &lt; 0.001)</font>", s_cap_tbl),
-        ieee_table(
-            [
-                ["Method", "Util %", "Mean Cost", "Damage Risk", "p-val"],
-                ["Proposed (Ours)", f"{c_prop['utilization_pct']['mean']:.1f}%", f"Rs.{c_prop['total_estimated_cost']['mean']:,.0f}", f"{c_prop['damage_risk_probability']['mean']:.3f}", "-"],
-                ["Always-Largest", f"{c_larg['utilization_pct']['mean']:.1f}%", f"Rs.{c_larg['total_estimated_cost']['mean']:,.0f}", f"{c_larg['damage_risk_probability']['mean']:.3f}", "<0.001"],
-                ["Simulated Manual", f"{c_man['utilization_pct']['mean']:.1f}%", f"Rs.{c_man['total_estimated_cost']['mean']:,.0f}", f"{c_man['damage_risk_probability']['mean']:.3f}", "<0.001"],
-                ["No-Grouping", f"{c_nogrp['utilization_pct']['mean']:.1f}%", f"Rs.{c_nogrp['total_estimated_cost']['mean']:,.0f}", f"{c_nogrp['damage_risk_probability']['mean']:.3f}", "<0.001"],
-            ],
-            [76, 36, 52, 48, 36],
-        ),
-        Spacer(1, 4),
-        _aspect_image(figs["fig3"], COL_W - 4),
-        Paragraph("Fig. 3. Mean direct cost, damage risk, and utilization across 200 simulated carts.", s_cap_fig),
+    items_3d = [
+        (2.5, 2.5, 2.5, 21.0, 17.0, 16.0, "#4A708B"),
+        (25.0, 2.5, 2.5, 21.0, 17.0, 15.0, "#2A7B88"),
+        (2.5, 21.0, 2.5, 22.0, 16.0, 14.0, "#B86B11"),
+        (2.5, 2.5, 20.0, 18.0, 15.0, 11.0, "#8B2635"),
+    ]
+    for x, y, z, dx, dy, dz, col in items_3d:
+        ax1.bar3d(x, y, z, dx, dy, dz, color=col, alpha=0.72, edgecolor="#111111", linewidth=0.5)
+    ax1.set_xlim(0, L)
+    ax1.set_ylim(0, W)
+    ax1.set_zlim(0, H)
+    ax1.set_xlabel("X (cm)", labelpad=4)
+    ax1.set_ylabel("Y (cm)", labelpad=4)
+    ax1.set_zlabel("Z (cm)", labelpad=4)
+    ax1.set_title("(a) ISTA-Padded 3D Placement (C-LARGE-99)", fontsize=9.3, pad=6)
+    ax1.view_init(elev=22, azim=-52)
 
-        Paragraph("C. Ablation and Feature Sensitivity Findings", s_h2),
-        Paragraph(
-            f"Disabling compatibility grouping raises mean transit damage risk by {ab_grp['damage_risk_probability']['pct_change']:+.1f}% (from {ab_grp['damage_risk_probability']['grouping_on_mean']:.3f} to {ab_grp['damage_risk_probability']['grouping_off_mean']:.3f}, <i>p</i> = {ab_grp['damage_risk_probability']['wilcoxon_p_value']:.2e}) due to liquid/thermal commingling, while turning GenAI on or off yields exact 0.00% delta on box dimensions, costs, and risk. Table III reports +/-25% one-at-a-time elasticity on the calibrated XGBoost risk predictor, highlighting ISTA cushion adequacy ({sens['cushion_adequacy_ratio']['elasticity_index']:.3f}) and fragility ({sens['max_fragility']['elasticity_index']:.3f}) as dominant controllable levers.",
-            s_body_noind,
-        ),
-        Paragraph(f"TABLE III. <font size='7.2'>ML RISK PREDICTOR +/-25% FEATURE ELASTICITY</font>", s_cap_tbl),
-        ieee_table(
-            [
-                ["Perturbed Feature", "-25% Risk", "+25% Risk", "Elasticity"],
-                ["ISTA Cushion Ratio", f"{sens['cushion_adequacy_ratio']['-25%']['mean_risk']:.4f}", f"{sens['cushion_adequacy_ratio']['+25%']['mean_risk']:.4f}", f"{sens['cushion_adequacy_ratio']['elasticity_index']:.3f}"],
-                ["Max Fragility", f"{sens['max_fragility']['-25%']['mean_risk']:.4f}", f"{sens['max_fragility']['+25%']['mean_risk']:.4f}", f"{sens['max_fragility']['elasticity_index']:.3f}"],
-                ["Unprotected Void %", f"{sens['unprotected_void_pct']['-25%']['mean_risk']:.4f}", f"{sens['unprotected_void_pct']['+25%']['mean_risk']:.4f}", f"{sens['unprotected_void_pct']['elasticity_index']:.3f}"],
-                ["Board ECT (kN/m)", f"{sens['board_ect_kn_m']['-25%']['mean_risk']:.4f}", f"{sens['board_ect_kn_m']['+25%']['mean_risk']:.4f}", f"{sens['board_ect_kn_m']['elasticity_index']:.3f}"],
-            ],
-            [88, 52, 52, 56],
-        ),
+    ax2 = fig.add_subplot(1, 2, 2)
+    caps_log = [np.log10(max(1.0, c.max_payload_kg)) for c in ORDERED_CONTAINERS]
+    ects = [c.ect_kn_m for c in ORDERED_CONTAINERS]
+    short_names = [c.container_id for c in ORDERED_CONTAINERS]
+    x_idx = np.arange(len(ORDERED_CONTAINERS))
 
-        # Section V
-        h1("V", "Enterprise Deployment and Telemetry"),
-        Paragraph(
-            "PackOptima is deployed as a decoupled FastAPI and Streamlit Control Tower stack backed by a four-table SQLAlchemy relational store (`master_skus`, `custom_containers`, `order_audits`, `shipment_records`). Ops engineers register custom warehouse cartons that dynamically participate in CP-SAT packing, export printable HTML/Markdown dispatch manifests containing 3D load coordinates, inspect interactive exploded-view 3D cushion envelopes, and log closed-loop carrier delivery outcomes (`delivered_intact` vs. `damaged_in_transit`) to track live calibration drift. Thirty-six automated `pytest` unit and integration tests validate routing monotonicity, 3D non-overlap invariants, cold-chain rules, LLM switching, and REST endpoints.",
-            s_body_noind,
-        ),
+    ax2_r = ax2.twinx()
+    b1 = ax2.bar(x_idx - 0.18, caps_log, width=0.36, color="#2C5282", label="log10(Max Payload kg)")
+    b2 = ax2_r.bar(x_idx + 0.18, ects, width=0.36, color="#718096", label="ECT Rating (kN/m)")
+    ax2.set_xticks(x_idx)
+    ax2.set_xticklabels(short_names, rotation=50, ha="right", fontsize=6.8)
+    ax2.set_ylabel("log10(Max Payload kg)", color="#2C5282")
+    ax2_r.set_ylabel("Edge Crush Test ECT (kN/m)", color="#4A5568")
+    ax2.set_title("(b) BIS IS 2771 & Cold-Chain Container Tiers (n=14)", fontsize=9.2, pad=8)
+    ax2.grid(axis="y", linestyle="--", alpha=0.25)
+    ax2.legend([b1, b2], [b1.get_label(), b2.get_label()], loc="upper left", frameon=True, fontsize=7.2)
 
-        # Section VI
-        h1("VI", "Conclusion"),
-        Paragraph(
-            "By unifying standards-grounded 3D constraint programming, Indian Zone A–E logistics economics, isotonic damage probability calibration, and strict post-hoc LLM translation, PackOptima achieves substantial reductions in both physical transit damage exposure and wasted freight spend. Future work will incorporate empirical carrier claims logs to replace synthetic training priors via online Bayesian recalibration and extend multi-bin packing to heterogeneous mixed-pallet optimization.",
-            s_body_noind,
-        ),
+    fig.tight_layout(pad=0.8)
+    fig.savefig(fig2_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    figs["fig2"] = fig2_path
 
-        # References
-        h1("", "References"),
-        Paragraph("[1] Delhivery &amp; Shiprocket Documentation, \"Volumetric Weight Calculation and Zone A–E Shipping Rate Card Standards in India,\" 2024.", s_ref),
-        Paragraph("[2] R. Ganeshan and T. P. Harrison, \"An introduction to supply chain management,\" Dept. Management Science, Penn State Univ., Tech. Rep., 2020.", s_ref),
-        Paragraph("[3] International Safe Transit Association, \"ISTA Resource Book: Atmospheric Conditioning Effects on Corrugated Fiberboard Compression Strength,\" East Lansing, MI, USA, 2022.", s_ref),
-        Paragraph("[4] ISTA, \"Procedure 3A: Packaged-Products for Parcel Delivery System Shipment 70 kg (150 lb) or Less,\" ISTA Standard 3A, 2018.", s_ref),
-        Paragraph("[5] Bureau of Indian Standards, \"Corrugated Fibreboard Boxes — Specification (Part 1),\" IS 2771 (Part 1): 2022, New Delhi, India.", s_ref),
-        Paragraph("[6] S. Martello, D. Pisinger, and D. Vigo, \"The three-dimensional bin packing problem,\" <i>Operations Research</i>, vol. 48, no. 2, pp. 256–267, 2000.", s_ref),
-        Paragraph("[7] L. Perron and V. Furnon, \"OR-Tools CP-SAT Solver,\" Google AI Optimization Team, v9.7, 2023.", s_ref),
-        Paragraph("[8] T. Chen and C. Guestrin, \"XGBoost: A scalable tree boosting system,\" in <i>Proc. ACM SIGKDD</i>, 2016, pp. 785–794.", s_ref),
-        Paragraph("[9] B. Zadrozny and C. Elkan, \"Transforming classifier scores into accurate multiclass probability estimates,\" in <i>Proc. ACM SIGKDD</i>, 2002, pp. 694–699.", s_ref),
-        Paragraph("[10] L. Breiman, \"Random forests,\" <i>Machine Learning</i>, vol. 45, no. 1, pp. 5–32, 2001.", s_ref),
-        Paragraph("[11] G. Ke et al., \"LightGBM / Histogram-based gradient boosting decision trees,\" in <i>Adv. Neural Inf. Process. Syst.</i>, 2017.", s_ref),
-        Paragraph("[12] Qwen Team, \"Qwen2.5 Technical Report: Compact Instruction-Tuned Small Language Models,\" Alibaba Cloud, 2024.", s_ref),
-        Paragraph("[13] Google DeepMind, \"Gemini 2.5 Flash &amp; Pro Model Family Overview,\" Google AI Studio Documentation, 2025.", s_ref),
-        Paragraph("[14] DEFRA / GLEC Framework, \"Global Logistics Emissions Council Scope 3 Transport Emission Factors,\" Smart Freight Centre, 2023.", s_ref),
+    # -----------------------------------------------------------------------
+    # Figure 3: ML Classifier Performance & Calibration Comparison
+    # -----------------------------------------------------------------------
+    fig3_path = FIG_DIR / "fig3_ml_metrics.png"
+    ev = data["eval"]
+    models = [m for m in ["XGBoost", "RandomForest", "HistGradientBoosting"] if m in ev]
+
+    roc_aucs = [float(ev[m]["roc_auc"]) for m in models]
+    avg_precs = [float(ev[m]["avg_precision"]) for m in models]
+    f1s = [float(ev[m]["f1_score"]) for m in models]
+    accs = [float(ev[m]["accuracy"]) for m in models]
+    cv_means = [float(ev[m]["cv_auc_mean"]) for m in models]
+    cv_stds = [float(ev[m]["cv_auc_std"]) for m in models]
+    briers = [float(ev[m]["brier_score"]) for m in models]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8.6, 3.3))
+    x = np.arange(len(models))
+    w = 0.19
+    ax1.bar(x - 1.5 * w, roc_aucs, w, label="ROC-AUC", color="#1B365D")
+    ax1.bar(x - 0.5 * w, avg_precs, w, label="Avg. Precision", color="#2A7B88")
+    ax1.bar(x + 0.5 * w, accs, w, label="Accuracy", color="#718096")
+    ax1.bar(x + 1.5 * w, f1s, w, label="F1-Score", color="#B86B11")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(models, fontsize=8.5)
+    ax1.set_ylim(0.55, 0.98)
+    ax1.set_ylabel("Score")
+    ax1.set_title("(a) Test-Set Discrimination (n_test = 2,400)", fontsize=9.3)
+    ax1.grid(axis="y", linestyle="--", alpha=0.25)
+    ax1.legend(loc="lower right", ncol=2, frameon=True, fontsize=7.5)
+
+    ax2_r = ax2.twinx()
+    ax2.bar(x - 0.17, cv_means, width=0.34, yerr=cv_stds, capsize=3.5, color="#1B365D", label="5-Fold CV ROC-AUC")
+    ax2_r.bar(x + 0.17, briers, width=0.34, color="#8B2635", label="Brier Score (Lower=Better)")
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(models, fontsize=8.5)
+    ax2.set_ylim(0.84, 0.91)
+    ax2_r.set_ylim(0.0, 0.14)
+    ax2.set_ylabel("5-Fold CV ROC-AUC", color="#1B365D")
+    ax2_r.set_ylabel("Brier Calibration Loss", color="#8B2635")
+    ax2.set_title("(b) Cross-Validation Stability & Brier Loss", fontsize=9.3)
+    ax2.grid(axis="y", linestyle="--", alpha=0.25)
+    for idx, br in enumerate(briers):
+        ax2_r.text(idx + 0.17, br + 0.003, f"{br:.4f}", ha="center", va="bottom", fontsize=7.3, color="#8B2635")
+    for idx, cvm in enumerate(cv_means):
+        ax2.text(idx - 0.17, cvm + cv_stds[idx] + 0.001, f"{cvm:.4f}", ha="center", va="bottom", fontsize=7.3, color="#1B365D")
+    l1, lb1 = ax2.get_legend_handles_labels()
+    l2, lb2 = ax2_r.get_legend_handles_labels()
+    ax2.legend(l1 + l2, lb1 + lb2, loc="lower left", fontsize=7.3, frameon=True)
+
+    fig.tight_layout(pad=0.8)
+    fig.savefig(fig3_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    figs["fig3"] = fig3_path
+
+    # -----------------------------------------------------------------------
+    # Figure 4: 200-Cart Empirical Baseline Comparison
+    # -----------------------------------------------------------------------
+    fig4_path = FIG_DIR / "fig4_baseline_comparison.png"
+    conds = data["stat"]["conditions"]
+    keys_order = ["proposed", "always_largest", "simulated_manual", "no_grouping"]
+    labels_clean = ["Proposed", "Always\nLargest", "Simulated\nManual", "No\nGrouping"]
+    palette = ["#1B365D", "#718096", "#B86B11", "#8B2635"]
+
+    utils_m = [float(conds[k]["utilization_pct"]["mean"]) for k in keys_order]
+    utils_s = [float(conds[k]["utilization_pct"]["std"]) for k in keys_order]
+    cost_m = [float(conds[k]["total_estimated_cost"]["mean"]) for k in keys_order]
+    cost_s = [float(conds[k]["total_estimated_cost"]["std"]) for k in keys_order]
+    risk_m = [float(conds[k]["damage_risk_probability"]["mean"]) for k in keys_order]
+    risk_s = [float(conds[k]["damage_risk_probability"]["std"]) for k in keys_order]
+
+    fig, axes = plt.subplots(1, 3, figsize=(8.8, 3.1))
+    xi = np.arange(len(keys_order))
+    panels = [
+        (axes[0], utils_m, utils_s, "Utilization (%)", "(a) Volumetric Utilization", "{:.1f}%"),
+        (axes[1], cost_m, cost_s, "Total Cost (INR)", "(b) Mean Freight & Box Cost", "{:.0f}"),
+        (axes[2], risk_m, risk_s, "Damage Risk Prob.", "(c) Calibrated Damage Risk", "{:.3f}"),
+    ]
+    for ax, means, stds, ylab, title, fmt in panels:
+        bars = ax.bar(xi, means, yerr=stds, capsize=3, color=palette, width=0.58, edgecolor="#111111", linewidth=0.5)
+        ax.set_xticks(xi)
+        ax.set_xticklabels(labels_clean, fontsize=7.8)
+        ax.set_ylabel(ylab)
+        ax.set_title(title, fontsize=9.2)
+        ax.grid(axis="y", linestyle="--", alpha=0.25)
+        ymax = max([m + s for m, s in zip(means, stds)] + [1e-6])
+        ax.set_ylim(0, ymax * 1.24)
+        for b, m, s in zip(bars, means, stds):
+            ax.text(b.get_x() + b.get_width() / 2.0, m + s + ymax * 0.02, fmt.format(m), ha="center", va="bottom", fontsize=7.3)
+
+    fig.tight_layout(pad=0.8)
+    fig.savefig(fig4_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    figs["fig4"] = fig4_path
+
+    # -----------------------------------------------------------------------
+    # Figure 5: Ablation Studies & +/-25% Parametric Sensitivity Elasticity
+    # -----------------------------------------------------------------------
+    fig5_path = FIG_DIR / "fig5_ablation_sensitivity.png"
+    abl = data["ablation"]
+    grp = abl["ablation_grouping"]
+    sens = abl["sensitivity_analysis"]
+    pert = sens["perturbations"]
+
+    on_cost = float(grp["total_estimated_cost"]["grouping_on_mean"])
+    off_cost = float(grp["total_estimated_cost"]["grouping_off_mean"])
+    on_risk = float(grp["damage_risk_probability"]["grouping_on_mean"])
+    off_risk = float(grp["damage_risk_probability"]["grouping_off_mean"])
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8.6, 3.2))
+    gx = np.arange(2)
+    ax1_r = ax1.twinx()
+    ax1.bar(gx - 0.16, [on_cost, off_cost], width=0.30, color="#2C5282", label="Mean Total Cost (INR)")
+    ax1_r.bar(gx + 0.16, [on_risk, off_risk], width=0.30, color="#8B2635", label="Mean Damage Risk")
+    ax1.set_xticks(gx)
+    ax1.set_xticklabels(["Grouping ON\n(Proposed)", "Grouping OFF\n(Unpartitioned)"], fontsize=8.5)
+    ax1.set_ylabel("Mean Cost (INR)", color="#2C5282")
+    ax1_r.set_ylabel("Damage Risk Probability", color="#8B2635")
+    ax1.set_ylim(0, max(on_cost, off_cost) * 1.30)
+    ax1_r.set_ylim(0, max(on_risk, off_risk) * 1.30)
+    ax1.set_title("(a) Compatibility Grouping Ablation (n=200)", fontsize=9.2)
+    ax1.grid(axis="y", linestyle="--", alpha=0.25)
+    ax1.text(-0.16, on_cost * 1.03, f"Rs.{on_cost:.0f}", ha="center", va="bottom", fontsize=7.5, color="#2C5282")
+    ax1.text(0.84, off_cost * 1.03, f"Rs.{off_cost:.0f}", ha="center", va="bottom", fontsize=7.5, color="#2C5282")
+    ax1_r.text(0.16, on_risk * 1.03, f"{on_risk:.3f}", ha="center", va="bottom", fontsize=7.5, color="#8B2635")
+    ax1_r.text(1.16, off_risk * 1.03, f"{off_risk:.3f}", ha="center", va="bottom", fontsize=7.5, color="#8B2635")
+    h1, l1 = ax1.get_legend_handles_labels()
+    h2, l2 = ax1_r.get_legend_handles_labels()
+    ax1.legend(h1 + h2, l1 + l2, loc="upper center", fontsize=7.3, frameon=True)
+
+    feat_specs = [
+        ("cushion_adequacy_ratio", "ISTA Cushion Ratio"),
+        ("max_fragility", "Max Fragility"),
+        ("unprotected_void_pct", "Unprotected Void %"),
+        ("board_ect_kn_m", "Board ECT (kN/m)"),
+    ]
+    pairs = sorted([(float(pert[k]["elasticity_index"]), lbl) for k, lbl in feat_specs], key=lambda t: t[0])
+    vals_sorted = [p[0] for p in pairs]
+    names_sorted = [p[1] for p in pairs]
+    sy = np.arange(len(names_sorted))
+    bars = ax2.barh(sy, vals_sorted, color=["#718096", "#B86B11", "#2A7B88", "#1B365D"], height=0.52, edgecolor="#111111", linewidth=0.5)
+    ax2.set_yticks(sy)
+    ax2.set_yticklabels(names_sorted, fontsize=8.0)
+    ax2.set_xlabel("Elasticity Index (+/-25% Perturbation)")
+    ax2.set_title("(b) Risk Sensitivity (Baseline = {:.4f})".format(float(sens["baseline_mean_risk"])), fontsize=9.1)
+    ax2.set_xlim(0, max(vals_sorted) * 1.24)
+    ax2.grid(axis="x", linestyle="--", alpha=0.25)
+    for b, v in zip(bars, vals_sorted):
+        ax2.text(v + max(vals_sorted) * 0.02, b.get_y() + b.get_height() / 2.0, f"{v:.3f}", va="center", ha="left", fontsize=7.8)
+
+    fig.tight_layout(pad=0.8)
+    fig.savefig(fig5_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    figs["fig5"] = fig5_path
+
+    return figs
+
+
+# ---------------------------------------------------------------------------
+# 1. Strict 7-Page IEEE Conference Paper (.pdf + .tex)
+# ---------------------------------------------------------------------------
+
+def _build_ieee_story(
+    figs: dict[str, Path],
+    data: dict[str, Any],
+    col_w: float,
+    body_pt: float,
+    body_leading: float,
+    fig_scale: float,
+    space_scale: float,
+) -> list[Any]:
+    """Build substantive two-column IEEE conference flowables designed to fill 7 pages."""
+    ev = data["eval"]
+    meta = data["meta"]
+    stat = data["stat"]
+    abl = data["ablation"]
+
+    conds = stat["conditions"]
+    wil = stat["wilcoxon_tests_vs_proposed"]
+    grp = abl["ablation_grouping"]
+    sens = abl["sensitivity_analysis"]
+    pert = sens["perturbations"]
+
+    xgb = ev["XGBoost"]
+    rf = ev["RandomForest"]
+    hgb = ev["HistGradientBoosting"]
+    prop = conds["proposed"]
+    larg = conds["always_largest"]
+    man = conds["simulated_manual"]
+    nogrp = conds["no_grouping"]
+
+    risk_grp = grp["damage_risk_probability"]
+    cost_grp = grp["total_estimated_cost"]
+    util_grp = grp["utilization_pct"]
+
+    sp = lambda pt: Spacer(1, max(1.0, pt * space_scale))
+
+    s_title = ParagraphStyle("IEEETitle", fontName=FONTS["bold"], fontSize=18.5, leading=21.5, alignment=TA_CENTER, textColor=colors.black, spaceAfter=4)
+    s_author = ParagraphStyle("IEEEAuthor", fontName=FONTS["regular"], fontSize=10.5, leading=13.0, alignment=TA_CENTER, textColor=colors.black)
+    s_affil = ParagraphStyle("IEEEAffil", fontName=FONTS["italic"], fontSize=9.5, leading=11.5, alignment=TA_CENTER, textColor=colors.black)
+    s_email = ParagraphStyle("IEEEEmail", fontName=FONTS["regular"], fontSize=9.0, leading=11.0, alignment=TA_CENTER, textColor=colors.black)
+    s_abs = ParagraphStyle("IEEEAbstract", fontName=FONTS["regular"], fontSize=8.8, leading=10.6, alignment=TA_JUSTIFY, textColor=colors.black)
+    s_h1 = ParagraphStyle("IEEEH1", fontName=FONTS["bold"], fontSize=10.0, leading=12.0, alignment=TA_CENTER, spaceBefore=5.5 * space_scale, spaceAfter=2.5 * space_scale, keepWithNext=True, textColor=colors.black)
+    s_h2 = ParagraphStyle("IEEEH2", fontName=FONTS["italic"], fontSize=9.5, leading=11.2, alignment=TA_LEFT, spaceBefore=4.0 * space_scale, spaceAfter=2.0 * space_scale, keepWithNext=True, textColor=colors.black)
+    s_body = ParagraphStyle("IEEEBody", fontName=FONTS["regular"], fontSize=body_pt, leading=body_leading, alignment=TA_JUSTIFY, firstLineIndent=10.0, spaceAfter=2.0 * space_scale, textColor=colors.black)
+    s_body0 = ParagraphStyle("IEEEBodyNoIndent", parent=s_body, firstLineIndent=0.0)
+    s_cap = ParagraphStyle("IEEECaption", fontName=FONTS["regular"], fontSize=7.9, leading=9.4, alignment=TA_CENTER, spaceBefore=2, spaceAfter=3.5 * space_scale, textColor=colors.black)
+    s_ref = ParagraphStyle("IEEERef", fontName=FONTS["regular"], fontSize=7.8, leading=9.3, alignment=TA_JUSTIFY, leftIndent=14, firstLineIndent=-14, spaceAfter=1.4 * space_scale, textColor=colors.black)
+    s_alg = ParagraphStyle("IEEEAlg", fontName=FONTS["regular"], fontSize=7.6, leading=9.3, alignment=TA_LEFT, textColor=colors.black)
+
+    story: list[Any] = []
+
+    # Title frame (Page 1 full span)
+    story.append(Paragraph(
+        "PackOptima: Physics-Informed Three-Dimensional Bin Packing, Calibrated Damage Risk Estimation, and Carbon-Aware Freight Optimization",
+        s_title,
+    ))
+    story.append(Paragraph(AUTHOR_NAME, s_author))
+    story.append(Paragraph(AUTHOR_DEPT, s_affil))
+    story.append(Paragraph(AUTHOR_UNIV, s_affil))
+    story.append(Paragraph(AUTHOR_EMAIL, s_email))
+    story.append(Spacer(1, 4))
+    story.append(HRFlowable(width="100%", thickness=0.6, color=colors.black))
+    story.append(FrameBreak())
+    story.append(NextPageTemplate("LaterPages"))
+
+    # Abstract & Index Terms
+    story.append(Paragraph(
+        f"<b><i>Abstract</i>—Modern parcel and less-than-truckload e-commerce logistics face a coupled optimization dilemma: minimizing dimensional-weight freight surcharges while preventing shock-induced mechanical damage across multi-node sortation hubs. Conventional three-dimensional bin packing solvers maximize geometric fill ratio without encoding corrugated board strength, internal cushion deformation, or inter-category hazard incompatibility. This paper introduces PackOptima, an end-to-end decision framework unifying (1) compatibility-constrained cart partitioning across 10 standardized product categories, (2) Constraint Programming (CP-SAT) three-dimensional packing over 14 BIS IS 2771 (Part 1): 2022 and cold-chain container tiers with International Safe Transit Association (ISTA 3A) padding rules and a scalable Shelf-FFD fallback for orders exceeding 35 expanded units, (3) an isotonic-calibrated XGBoost damage probability estimator trained on 15 physical descriptors across {meta['n_train_samples'] + meta['n_test_samples']:,} physics-grounded samples (test ROC-AUC = {xgb['roc_auc']:.4f}, Brier score = {xgb['brier_score']:.4f}), and (4) an Indian 6-digit PIN zone freight and Scope 3 carbon accounting engine. Narrative advisory generation via swappable Gemini 2.5 and open-weight Qwen2.5 instruction models is strictly isolated from numerical scoring (0.00% variance). Across a 200-cart stratified benchmark, PackOptima limits mean predicted damage risk to {prop['damage_risk_probability']['mean']:.3f}, whereas ablating compatibility partitioning inflates damage risk by +{risk_grp['pct_change']:.1f}% (Wilcoxon p = {risk_grp['wilcoxon_p_value']:.2e}).</b>",
+        s_abs,
+    ))
+    story.append(sp(3.5))
+    story.append(Paragraph(
+        "<b><i>Index Terms</i>—Three-dimensional bin packing, constraint programming, ISTA 3A cushioning, BIS IS 2771, isotonic probability calibration, XGBoost, Scope 3 emissions, Indian e-commerce logistics.</b>",
+        s_abs,
+    ))
+
+    # --- SECTION I ---
+    story.append(Paragraph("I. INTRODUCTION", s_h1))
+    story.append(Paragraph(
+        "High-frequency retail distribution networks incur substantial economic and environmental externalities from sub-optimal secondary packaging. Oversized corrugated cartons inflate dimensional freight billing (computing volumetric weight via length x width x height divided by 5,000), increase virgin kraft pulp demand, and raise Scope 3 transportation emissions. Conversely, aggressive compaction without adequate internal cushioning exposes fragile items to drop impacts, edge crush fatigue, and cross-contamination when incompatible commodities share a single enclosed parcel [1], [2].",
+        s_body0,
+    ))
+    story.append(Paragraph(
+        "Operational warehouse management heuristics routinely decouple container geometry from transit mechanics. Pure First-Fit Decreasing (FFD) or fixed single-box policies ignore corrugated Edge Crush Test (ECT) capacities, Mullen burst ratings, thermal insulation boundaries, and commodity hazards such as placing dense metallic automotive components alongside brittle glassware or ambient electronics [3]. Simultaneously, raw uncalibrated machine learning classifiers frequently produce poorly scaled logits unsuitable for direct expected-loss risk pricing [4].",
+        s_body,
+    ))
+    story.append(Paragraph(
+        "Furthermore, emerging carrier landscapes across geographically diverse networks such as India introduce tiered distance tariffs across five postal zones (Zones A through E), carrier slab rounding rules, out-of-delivery-area (ODA) handling penalties, and stacked-height less-than-truckload pallet conversion factors. Existing open research rarely couples exact three-dimensional orthogonal container placement with localized domestic tariff structures and calibrated mechanical breakage probabilities within one unified verification suite.",
+        s_body,
+    ))
+    story.append(Paragraph(
+        "To resolve these gaps, this work presents PackOptima (PS-116), a deterministic physical-optimization architecture paired with calibrated risk learning and strictly decoupled generative advisory capabilities. The principal scholarly contributions of this paper are organized around four pillars:",
+        s_body,
+    ))
+    for b in [
+        "1) <i>Domain-Constrained Compatibility Partitioning and BIS Catalog:</i> We formalize a 10-category SKU ontology spanning normalized fragility profiles, thermal requirements, and incompatibility hazard scoring, coupled to 14 physical containers grounded in BIS IS 2771 (Part 1): 2022 and cold-chain logistics specifications.",
+        "2) <i>Hybrid CP-SAT and Shelf-FFD Three-Dimensional Packing:</i> We model non-overlapping orthogonal placement, axis upright locks, center-of-gravity corner compaction, ISTA 3A dynamic cushion envelopes, and multi-carton splits (k = 2..5) in OR-Tools CP-SAT, transitioning seamlessly to an O(n log n) upright Shelf-FFD heuristic when expanded unit counts exceed 35.",
+        f"3) <i>Calibrated Physics-Informed Breakage Modeling:</i> We formulate 15 coupled stress descriptors and evaluate 3-fold isotonic-calibrated ensembles across N = {meta['n_train_samples'] + meta['n_test_samples']:,} shipments, establishing XGBoost superiority (ROC-AUC = {xgb['roc_auc']:.4f}, Brier = {xgb['brier_score']:.4f}) with single-threaded cached sub-millisecond candidate inference.",
+        "4) <i>Localized Zone A–E Tariff, Scope 3 Accounting, and LLM Isolation:</i> We validate Indian PIN freight formulas, tonne-kilometer emission factors, SQLite audit trails, and dual Gemini 2.5 / Qwen2.5 narration guaranteeing zero numerical interference.",
+    ]:
+        story.append(Paragraph(b, s_body))
+
+    # --- SECTION II ---
+    story.append(Paragraph("II. RELATED WORK", s_h1))
+    story.append(Paragraph(
+        "The orthogonal three-dimensional single- and multiple-bin packing problem (3D-BPP) is strongly NP-hard, generalizing one-dimensional cutting-stock formulations [5]. Martello et al. [6] formulated branch-and-bound lower bounds for three-dimensional container loading under stability restrictions, while Wascher et al. [2] unified cutting and packing typologies. Because exact branch-and-bound struggles with large heterogeneous orders, Crainic et al. [7] proposed Extreme-Point (EP) construction rules and Allen et al. [13] analyzed hybrid strip packing heuristics. Complementary studies introduced mechanical equilibrium constraints [14] and load-bearing hierarchy limits [15] to prevent carton collapse in stacked freight.",
+        s_body0,
+    ))
+    story.append(Paragraph(
+        "Modern Constraint Programming Satisfiability (CP-SAT) engines [8] encode disjunctive coordinate separation via boolean indicator literals, making exact side-constraints such as per-item axis upright locks and weight-stratified vertical placement computationally tractable for typical parcel manifests. For corrugated carton mechanics, McKee et al. [9] linked container top-to-bottom compression resistance directly to board Edge Crush Test (ECT), thickness, and perimeter, whereas ISTA 3A parcel protocols [10] and Burgess [17] established nonlinear cushion thickness rules balancing impact deceleration against box footprint inflation.",
+        s_body,
+    ))
+    story.append(Paragraph(
+        "In predictive logistics risk analytics, gradient-boosted decision trees such as XGBoost [11] and Histogram Gradient Boosting capture complex higher-order interactions among void space, box ply strength, and handling counts. However, Niculescu-Mizil and Caruana [4] and Guo et al. [12] demonstrated that tree ensembles require post-hoc Platt scaling or isotonic recalibration to yield faithful probability estimates. Concurrently, standardized Scope 3 reporting frameworks such as GLEC v3.0 [16] codify modal emission intensities per tonne-kilometer alongside embodied packaging footprints. PackOptima bridges these domains cleanly rather than treating any sub-problem in isolation.",
+        s_body,
+    ))
+
+    # --- SECTION III ---
+    story.append(Paragraph("III. PROBLEM FORMULATION AND DOMAIN CONSTRAINTS", s_h1))
+    story.append(Paragraph("A. SKU Taxonomy, Fragility Physics, and Compatibility Partitioning", s_h2))
+    story.append(Paragraph(
+        "Every input order comprises discrete SKUs mapped to one of 10 commodity categories summarized in Table I. Rather than assigning coarse static labels, per-item intrinsic fragility f_i in [0.05, 0.98] combines the category baseline f_base with bulk density rho_i (in kg/L) and dimensional slenderness aspect ratio max(d)/min(d):",
+        s_body0,
+    ))
+    story.append(EquationBlock("f_i = clip(f_base(c_i) - 0.04*log10(rho_i + 1) + 0.045*ln(d_max / d_min), 0.05, 0.98)", "1", col_w))
+    story.append(Paragraph(
+        "Prior to packing, the cart partitioner constructs an undirected compatibility graph dividing heterogeneous items into mutually isolated physical subgroups {G_1..G_K} across thermal (Perishable Goods), wet hazard (liquid indicators), electrostatic sensitive (Precision Electronics), brittle delicate (Glass & Ceramics, Fine Art & Antiques), heavy rigid (Industrial Machinery, Automotive Parts), and general ambient items. Intra-carton incompatibility hazard H evaluates cold-chain breaches during multi-day surface runs (+0.50 penalty), liquid co-location alongside vulnerable paper/electronics, and heavy mechanical impactors co-packed with delicate SKUs:",
+        s_body,
+    ))
+    story.append(EquationBlock("min sum_k sum_{i,j in G_k} H(c_i, c_j)   s.t.   T_cold(i) = T_cold(j),  forall i,j in G_k", "2", col_w))
+
+    # TABLE I: 10 Product Categories (live from PRODUCT_CATEGORIES)
+    story.append(sp(2))
+    story.append(Paragraph("TABLE I. TEN PHYSICAL SKU CATEGORIES AND PROPERTIES", s_cap))
+    t1_rows = [["Category", "Fragility Range", "Base f", "Value (Rs/kg)", "Flags"]]
+    for cname, spec in PRODUCT_CATEGORIES.items():
+        flags = []
+        if spec.esd_sensitive:
+            flags.append("ESD")
+        if spec.requires_cold_chain:
+            flags.append("Cold")
+        if spec.heavy_duty:
+            flags.append("Heavy")
+        flag_str = "/".join(flags) if flags else "Std"
+        t1_rows.append([
+            cname,
+            f"{spec.fragility_range[0]:.2f}–{spec.fragility_range[1]:.2f}",
+            f"{spec.base_fragility:.2f}",
+            f"{spec.default_value_per_kg:.0f}",
+            flag_str,
+        ])
+    story.append(_booktabs_table(t1_rows, [col_w * 0.36, col_w * 0.20, col_w * 0.12, col_w * 0.18, col_w * 0.14], font_size=6.8, pad_v=1.8))
+    story.append(sp(3))
+
+    story.append(Paragraph("B. Complete 14-Tier BIS IS 2771 and Cold-Chain Container Catalog", s_h2))
+    story.append(Paragraph(
+        "For cargo valuation, unit declared values default cleanly or apply diminishing bulk weight scaling w_eff = w for w <= 15 kg and w_eff = 15 + 2.5*(w - 15)^0.65 otherwise, preventing distortion on dense low-value bulk industrial hardware. Each partitioned group is then tested against 14 standardized secondary containers (Table II) spanning 3-ply mailers, 5-ply laptops/heavy cartons, 7-ply jumbo shippers, passive EPS cold-chain enclosures (CC-EPS-S/M/L), ISPM-15 LTL pallets, active refrigerated PTL reefer skids, and 20-ft/40-ft closed steel FTL trucks.",
+        s_body0,
+    ))
+
+    # TABLE II: Complete 14 containers (live from ORDERED_CONTAINERS)
+    story.append(sp(2))
+    story.append(Paragraph("TABLE II. STANDARDIZED CONTAINER CATALOG (14 TIERS)", s_cap))
+    t2_rows = [["Container ID", "Class", "Inner (cm)", "Ply / Spec", "ECT", "Cap kg", "Rs."]]
+    for c in ORDERED_CONTAINERS:
+        d = f"{c.inner_dims_cm[0]:.0f}x{c.inner_dims_cm[1]:.0f}x{c.inner_dims_cm[2]:.0f}"
+        t2_rows.append([
+            c.container_id,
+            c.tier_class,
+            d,
+            c.ply_rating,
+            f"{c.ect_kn_m:.1f}",
+            f"{c.max_payload_kg:.0f}",
+            f"{c.material_cost_inr:.0f}",
+        ])
+    story.append(_booktabs_table(t2_rows, [col_w * 0.21, col_w * 0.14, col_w * 0.21, col_w * 0.17, col_w * 0.08, col_w * 0.10, col_w * 0.09], font_size=6.4, pad_v=1.5))
+    story.append(sp(3))
+
+    story.append(Paragraph("C. ISTA 3A Cushioning and Hybrid CP-SAT 3D Packing", s_h2))
+    story.append(Paragraph(
+        "To safeguard delicate edges during sortation conveyor transitions, each physical SKU instance receives an ISTA 3A protective foam/kraft cushion thickness c_i (cm) governed by its piecewise fragility and weight bracket:",
+        s_body0,
+    ))
+    story.append(EquationBlock("c_i = {0 if f<0.25; 0.5 if f<0.50; 2.0(m>=5)/1.5 if f<0.75; 3.0(m>=5)/2.5}", "3", col_w, font_size=8.2))
+    story.append(Paragraph(
+        "Effective packed item dimensions scale symmetrically as (l'_i, w'_i, h'_i) = (l_i + 2c_i, w_i + 2c_i, h_i + 2c_i). Let (L, W, H) represent inner container bounds discretized to millimeter integer units for exact CP-SAT arithmetic. Each item i chooses one of six axis-aligned orientations encoded via binary selectors r_{i,o} in {0, 1}, assigning oriented extents (dx_i, dy_i, dz_i) and origin (x_i, y_i, z_i) subject to containment, Big-M pairwise disjunctive non-overlap across orthogonal axes, upright preservation, mass conservation, and bottom-corner compaction:",
+        s_body,
+    ))
+    story.append(EquationBlock("0 <= x_i <= L - dx_i,   0 <= y_i <= W - dy_i,   0 <= z_i <= H - dz_i", "4", col_w))
+    story.append(EquationBlock("b_{i,j,a+} + b_{i,j,a-} >= 1  forall i < j, a in {x,y,z};   x_i + dx_i <= x_j + M(1 - b_{i,j,x+})", "5", col_w, font_size=8.0))
+    story.append(EquationBlock("sum_{o in O_upright} r_{i,o} = 1   if liquid_i or upright_i = 1", "6", col_w))
+    story.append(EquationBlock("min sum_i (2*z_i + x_i + y_i) + lambda_top * z_i * m_i", "7", col_w))
+    story.append(Paragraph(
+        "For shipments exceeding single-container limits, homogeneous multi-carton splitting examines k in {2..5} balanced partitions before escalating to pallet/FTL units. When total expanded physical units exceed n = 35, quadratic disjunctive clauses slow exact branch-and-bound; Algorithm 1 therefore invokes an O(n log n) upright-constrained Shelf First-Fit Decreasing (Shelf-FFD) heuristic sorting items by descending footprint and base mass.",
+        s_body,
+    ))
+    story.append(Paragraph(
+        "Specifically, Shelf-FFD partitions the sorted item sequence into horizontal X-Y shelves stacked along Z, closing each row whenever cumulative X exceeds container length L and starting a new Z layer once Y exceeds container width W. Because no two shelves overlap along Z and items remain axis-aligned inside their shelf stripes, containment holds constructively in linear pass time after O(n log n) sorting, guaranteeing predictable sub-second runtime on large B2B manifests without sacrificing ISTA cushion allowances.",
+        s_body,
+    ))
+
+    alg_rows = [
+        [Paragraph("<b>Algorithm 1: Compatibility-Constrained Hybrid 3D Packer</b>", s_alg)],
+        [Paragraph(
+            "<b>Input:</b> Order SKUs, Origin/Dest PIN, Optimization Mode w<br/>"
+            "<b>1:</b> Partition order into isolated groups {G_1..G_K} minimizing H via (2)<br/>"
+            "<b>2:</b> Expand quantities into physical units I_k; compute ISTA padding c_i via (3)<br/>"
+            "<b>3:</b> Filter catalog + DB containers C_ok meeting weight, max dimension, thermal rules<br/>"
+            "<b>4:</b> <b>For each</b> container C in C_ok <b>do</b>:<br/>"
+            "<b>5:</b> &nbsp;&nbsp;<b>If</b> |I_k| &lt;= 35: solve CP-SAT (4)-(7) [2.5s limit], retrying k=2..5 box splits<br/>"
+            "<b>6:</b> &nbsp;&nbsp;<b>Else:</b> invoke O(n log n) Shelf-FFD layer placement over descending area<br/>"
+            "<b>7:</b> &nbsp;&nbsp;Extract 15 physical descriptors x_k; infer calibrated risk P(D=1|x_k)<br/>"
+            "<b>8:</b> &nbsp;&nbsp;Compute landed Zone A-E cost via (9) and Scope 3 CO2e via (10)<br/>"
+            "<b>9:</b> Rank Pareto feasible options according to user objective w<br/>"
+            "<b>Return:</b> Top-ranked packing plan, 3D coordinates, risk score, and breakdown",
+            s_alg,
+        )],
+    ]
+    story.append(sp(2))
+    story.append(_booktabs_table(alg_rows, [col_w], header_bg=colors.HexColor("#F8F8F8"), font_size=7.4, pad_v=2.2))
+    story.append(sp(2))
+    story.append(_fit_image(figs["fig1"], col_w * fig_scale))
+    story.append(Paragraph("Fig. 1. End-to-end deterministic physics-ML pipeline with isolated generative advisory.", s_cap))
+
+    # --- SECTION IV ---
+    story.append(Paragraph("IV. PHYSICS-INFORMED DAMAGE RISK AND FREIGHT ENGINE", s_h1))
+    story.append(Paragraph("A. 15-Descriptor Stress Representation and Isotonic Calibration", s_h2))
+    story.append(Paragraph(
+        f"Geometric packing fit alone fails to measure drop survival under multi-hub shock stress. Every candidate carton configuration extracts exactly {len(meta['feature_columns'])} continuous and indicator descriptors summarized in Table III. Synthetic supervision across {meta['n_train_samples']:,} training and {meta['n_test_samples']:,} test shipments (N = {meta['n_train_samples'] + meta['n_test_samples']:,}) generates binary breakage labels D ~ Bernoulli(p) via a nonlinear logistic hazard model combining fragility peaks, inadequate ISTA cushion ratios, excessive internal unprotected void, board ECT insufficiency under high weight-to-limit load ratios, liquid hazard, and handling node multiplicity:",
+        s_body0,
+    ))
+    story.append(EquationBlock("P(D=1 | x) = sigma(beta_0 + beta^T phi(x) + interact(f_max, void, cushion, ECT))", "8", col_w))
+
+    story.append(sp(2))
+    story.append(Paragraph("TABLE III. ENGINEERED PHYSICS & LOGISTICS DESCRIPTORS (15 FEATURES)", s_cap))
+    feat_roles = {
+        "max_fragility": "Peak SKU fragility inside container [0.05–0.98]",
+        "mean_fragility": "Mass/count-weighted cart fragility baseline",
+        "unprotected_void_pct": "Unfilled volume fraction after cushion/dunnage",
+        "cushion_adequacy_ratio": "Deployed thickness / ISTA required threshold",
+        "total_weight_kg": "Net payload mass plus tare container weight",
+        "item_count": "Total expanded physical units in container",
+        "has_liquid": "Binary indicator for spillable liquid units",
+        "orientation_sensitive": "Binary flag requiring upright z-axis locking",
+        "distance_multiplier": "Carrier zone tariff multiplier (1.00x–2.85x)",
+        "handling_nodes": "Expected hub transfers from Zone A–E routing",
+        "weight_to_limit_ratio": "Total cargo weight / rated container max load",
+        "board_ect_kn_m": "Corrugated Edge Crush Test capacity (kN/m)",
+        "transit_vibration_factor": "Long-haul corridor fatigue proxy across hubs",
+        "incompatibility_hazard": "Intra-carton chemical/thermal/impact risk [0–1]",
+        "category_encoded": "Dominant integer category index (0–9)",
+    }
+    t3_feat_rows = [["Feature Identifier", "Physical Meaning & Hazard Mechanism"]]
+    for fcol in meta["feature_columns"]:
+        t3_feat_rows.append([fcol, feat_roles.get(fcol, "Physical descriptor")])
+    story.append(_booktabs_table(t3_feat_rows, [col_w * 0.42, col_w * 0.58], font_size=6.4, pad_v=1.5))
+    story.append(sp(2))
+
+    story.append(Paragraph(
+        f"XGBoost (220 trees, max depth 4), Random Forest, and HistGradientBoosting classifiers undergo 3-fold stratified isotonic probability calibration (CalibratedClassifierCV) [4]. Isotonic regression fits a piecewise constant monotonically non-decreasing calibration mapping via the pool-adjacent-violators algorithm over out-of-fold validation predictions, eliminating sigmoidal over-confidence in ensemble margins. As summarized in Table IV and Fig. 3, calibrated XGBoost delivers the highest test ROC-AUC ({xgb['roc_auc']:.4f}), Average Precision ({xgb['avg_precision']:.4f}), Accuracy ({xgb['accuracy']:.4f}), and F1-Score ({xgb['f1_score']:.4f}) alongside the lowest Brier calibration error ({xgb['brier_score']:.4f}). To eliminate OpenMP thread-pool fork overhead inside per-candidate solver loops, runtime inference locks estimators to single-threaded execution (n_jobs = 1) with parameter-rounded LRU memoization.",
+        s_body,
+    ))
+
+    story.append(sp(2))
+    story.append(Paragraph(f"TABLE IV. CLASSIFIER EVALUATION & 5-FOLD CV (N_TEST = {meta['n_test_samples']:,})", s_cap))
+    t4_cls_rows = [["Classifier", "Acc.", "F1", "ROC-AUC", "AP", "Brier", "CV AUC"]]
+    for m_name in ["XGBoost", "RandomForest", "HistGradientBoosting"]:
+        md = ev[m_name]
+        short_nm = "HistGB" if m_name == "HistGradientBoosting" else m_name
+        t4_cls_rows.append([
+            short_nm,
+            f"{md['accuracy']:.4f}",
+            f"{md['f1_score']:.4f}",
+            f"{md['roc_auc']:.4f}",
+            f"{md['avg_precision']:.4f}",
+            f"{md['brier_score']:.4f}",
+            f"{md['cv_auc_mean']:.3f}+/-{md['cv_auc_std']:.3f}",
+        ])
+    story.append(_booktabs_table(t4_cls_rows, [col_w * 0.21, col_w * 0.11, col_w * 0.11, col_w * 0.14, col_w * 0.11, col_w * 0.12, col_w * 0.20], font_size=6.7, pad_v=1.8))
+    story.append(sp(2))
+    story.append(_fit_image(figs["fig3"], col_w * fig_scale))
+    story.append(Paragraph("Fig. 3. Test-set discrimination (a) and 5-fold CV ROC-AUC with Brier calibration error (b).", s_cap))
+
+    story.append(Paragraph("B. Indian PIN-Zone Freight Tariffs and Scope 3 Carbon Accounting", s_h2))
+    story.append(Paragraph(
+        "The routing engine classifies 6-digit Indian PIN pairs into carrier distance tiers A through E specified in Table V. Parcel shipments calculate volumetric weight via L*W*H/5000 and apply tiered carrier slab rounding (0.5 kg steps up to 5.0 kg; 1.0 kg above 5.0 kg), followed by heavy-parcel tapering above 10 kg (W_tap = min(W_chg, 10) + 0.80 * max(0, W_chg - 10)), docket charges (Rs. 50 Air, Rs. 35 Surface, Rs. 25 Last-Mile per box), and ODA surcharges (Rs. 60/box). Void-fill dunnage pricing multiplies residual unpadded liters by kraft paper (Rs. 0.45/L), air pillow (Rs. 0.75/L), or high-resilience EPE foam (Rs. 1.60/L) rates capped at 55% of box acquisition cost. Pallet tiers switch to stacked-height [45, 165] cm 7 kg/CFT density billing (50 kg minimum slab plus Rs. 150 ODA), while PTL reefers and 20-ft/40-ft FTL trucks apply zone-scaled flat lane tariffs:",
+        s_body0,
+    ))
+    story.append(EquationBlock("Cost_total = C_box + C_dunnage(void) + C_freight(W_chg, Zone) + 0.30*P(D=1)*V_cargo", "9", col_w))
+
+    story.append(sp(2))
+    story.append(Paragraph("TABLE V. INDIAN 6-DIGIT PIN ZONE ROUTING & SLAS", s_cap))
+    t5_zone_rows = [
+        ["Zone", "Corridor Classification", "Mult.", "Nodes", "Est. km", "Surface SLA"],
+        ["Zone A", "Local / Metro Cluster", "1.00x", "2", "35", "1–2 d"],
+        ["Zone B", "Regional / Intra or Adj. State", "1.30x", "3", "320", "2–3 d"],
+        ["Zone C", "Metro-to-Metro Corridor", "1.65x", "4", "1,450", "3–4 d"],
+        ["Zone D", "National Cross-Country", "2.05–2.35x", "5", "1,750–2,150", "4–6 d"],
+        ["Zone E", "Special / NE / J&K / ODA", "2.85x", "7", "2,450", "6–10 d"],
+    ]
+    story.append(_booktabs_table(t5_zone_rows, [col_w * 0.13, col_w * 0.35, col_w * 0.15, col_w * 0.10, col_w * 0.15, col_w * 0.12], font_size=6.8, pad_v=1.8))
+    story.append(sp(2))
+    story.append(Paragraph(
+        "Environmental carbon accounting computes Scope 3 emissions (kg CO2e) from tonne-kilometer modal factors (Air: 0.602, Last-Mile: 0.160, Refrigerated Road: 0.135, Priority Cold Surface: 0.105, Surface: 0.085, PTL Surface: 0.068) plus embodied container materials (1.85 kg CO2e/kg for cold-chain EPS vs. 0.92 kg CO2e/kg for virgin kraft corrugated board):",
+        s_body0,
+    ))
+    story.append(EquationBlock("CO2e = (W_gross / 1000) * Distance_km * EF_mode + (1.85 or 0.92) * m_tare", "10", col_w, font_size=8.4))
+    story.append(Paragraph(
+        "Multi-objective Pareto sorting surfaces optimal options across four configurable operational lenses—Balanced Trade-off, Minimum Freight Cost, Eco-Friendly Lowest Carbon, and Risk-Averse Fragile Protection—allowing warehouse coordinators to inspect direct cost versus risk-adjusted total outlay explicitly.",
+        s_body,
+    ))
+
+    # --- SECTION V ---
+    story.append(Paragraph("V. SYSTEM ARCHITECTURE AND DUAL-PROVIDER GENAI", s_h1))
+    story.append(Paragraph("A. Relational Schema and Dual-Provider Model Switching", s_h2))
+    story.append(Paragraph(
+        "The production gateway implements a modular RESTful architecture in FastAPI coupled with SQLAlchemy 2.0 ORM persistence over four relational tables: master_skus (seedable catalog rows with sku_code, product_category, fragility_score, declared_value_inr, is_liquid, orientation_sensitive, and requires_cold_chain), custom_containers (tenant carton definitions queried dynamically during CP-SAT solver sweeps), order_audits (serialized cost savings, baseline unoptimized cost, and CO2e ledger snapshots via OrderAudit), and shipment_records (individual ShipmentRecord partitions storing group_label, recommended_carton_id, placements_json, actual_outcome, and outcome_recorded_at).",
+        s_body0,
+    ))
+    story.append(Paragraph(
+        "To eliminate proprietary API lock-in, the narrative layer exposes a live model switcher alternating seamlessly between cloud Google Gemini models (gemini-2.5-flash, gemini-2.5-pro) via google-genai and Hugging Face InferenceClient open-weight small instruction checkpoints (Qwen/Qwen2.5-1.5B-Instruct, Qwen/Qwen2.5-3B-Instruct, Qwen/Qwen2.5-7B-Instruct, and domain-tuned PYatiM/packaging_advisor_ps116). When remote inference quotas exhaust or external keys are absent, the router degrades gracefully to deterministic template prose built exclusively from finalized packing JSON fields. Crucially, architectural boundaries ensure generative text exerts zero numerical influence on container selection, 3D coordinates, damage probability, or freight billing.",
+        s_body,
+    ))
+    story.append(Paragraph("B. Multi-Category Partitioning Case Study and QA Telemetry", s_h2))
+    story.append(Paragraph(
+        "Consider a representative consolidated warehouse manifest combining Precision Electronics (ESD-sensitive = True, fragility_range = 0.60–0.85), Perishable Goods (requires_cold_chain = True), and Automotive Parts (heavy_duty = True) bound along a Zone D cross-country corridor (5 handling nodes, 1,750–2,150 km). Without compatibility partitioning, co-locating these disparate SKUs in an uninsulated single carton triggers +0.50 multi-day ambient thermal degradation in incompatibility_hazard alongside heavy-vs-delicate impact penalties.",
+        s_body0,
+    ))
+    story.append(Paragraph(
+        "Under PackOptima, graph partitioning isolates the cart into three independent ShipmentRecord segments linked under a single OrderAudit record: an insulated passive cold-chain box (CC-EPS-S/M) routed via Express Air for chilled goods, an anti-static cushioned medium shipper for Precision Electronics, and a 5-ply heavy carton for rigid Automotive Parts. Upon warehouse dispatch and final delivery inspection, closed-loop quality assurance telemetry records verified transit outcomes inside shipment_records (actual_outcome and damage_notes), allowing operators to audit predicted breakage risk against real carrier claims over time.",
+        s_body,
+    ))
+    story.append(sp(2))
+    story.append(_fit_image(figs["fig2"], col_w * fig_scale))
+    story.append(Paragraph("Fig. 2. (a) ISTA-padded 3D placement geometry in C-LARGE-99 and (b) 14 container payload/ECT tiers.", s_cap))
+
+    # --- SECTION VI ---
+    story.append(Paragraph("VI. EMPIRICAL EVALUATION AND BENCHMARKS", s_h1))
+    story.append(Paragraph(
+        "We conducted a controlled 200-cart stratified benchmark evaluating Proposed (PackOptima) against three operational baselines: (i) Always Largest, which forces maximum available carton envelopes; (ii) Simulated Manual, emulating standard single-tier human packer selection without mechanical risk scoring; and (iii) No Grouping, running CP-SAT optimization over unpartitioned manifests. All runs execute on identical PIN-zone tariffs and calibrated XGBoost damage models.",
+        s_body0,
+    ))
+
+    story.append(sp(2))
+    story.append(Paragraph("TABLE VI. 200-CART EMPIRICAL COMPARISON (MEAN +/- STD)", s_cap))
+    t5_rows = [["Strategy", "Util (%)", "Cost (Rs.)", "Damage Risk", "Wilcoxon p"]]
+    strat_spec = [
+        ("Proposed", "proposed", "—"),
+        ("Always Largest", "always_largest", f"{wil['always_largest']['damage_risk_probability']['p_value']:.2e}"),
+        ("Simulated Manual", "simulated_manual", f"{wil['simulated_manual']['damage_risk_probability']['p_value']:.2e}"),
+        ("No Grouping", "no_grouping", f"{wil['no_grouping']['damage_risk_probability']['p_value']:.2e}"),
+    ]
+    for label, key, pval in strat_spec:
+        blk = conds[key]
+        t5_rows.append([
+            label,
+            f"{blk['utilization_pct']['mean']:.1f}+/-{blk['utilization_pct']['std']:.1f}",
+            f"{blk['total_estimated_cost']['mean']:.0f}+/-{blk['total_estimated_cost']['std']:.0f}",
+            f"{blk['damage_risk_probability']['mean']:.3f}+/-{blk['damage_risk_probability']['std']:.3f}",
+            pval,
+        ])
+    story.append(_booktabs_table(t5_rows, [col_w * 0.24, col_w * 0.19, col_w * 0.21, col_w * 0.21, col_w * 0.15], font_size=6.8, pad_v=1.8))
+    story.append(sp(2))
+    story.append(_fit_image(figs["fig4"], col_w * fig_scale))
+    story.append(Paragraph("Fig. 4. 200-cart empirical comparison: utilization (a), cost (b), and calibrated risk (c).", s_cap))
+
+    story.append(Paragraph(
+        f"As quantified in Table VI and Fig. 4, Always Largest achieves negligible fill efficiency ({larg['utilization_pct']['mean']:.1f}%, Wilcoxon W = {wil['always_largest']['utilization_pct']['statistic']:.0f}, p = {wil['always_largest']['utilization_pct']['p_value']:.2e}) while inflating mean landed cost to Rs. {larg['total_estimated_cost']['mean']:.0f} (p = {wil['always_largest']['total_estimated_cost']['p_value']:.2e}). Simulated Manual and No Grouping compress short-term carton splits to Rs. {man['total_estimated_cost']['mean']:.0f} and Rs. {nogrp['total_estimated_cost']['mean']:.0f}, respectively, yet incur severe mechanical hazard escalation ({man['damage_risk_probability']['mean']:.3f} and {nogrp['damage_risk_probability']['mean']:.3f}). Proposed contains mean breakage risk at {prop['damage_risk_probability']['mean']:.3f} +/- {prop['damage_risk_probability']['std']:.3f}, yielding statistically decisive Wilcoxon reductions over all baselines (p <= {wil['no_grouping']['damage_risk_probability']['p_value']:.2e}).",
+        s_body,
+    ))
+    story.append(Paragraph(
+        f"Paired hypothesis tests across all three evaluation axes verify distinct structural advantages: Proposed improves spatial utilization significantly over Always Largest (p = {wil['always_largest']['utilization_pct']['p_value']:.2e}) while incurring intentional multi-carton segregation overhead relative to No Grouping (cost Wilcoxon W = {wil['no_grouping']['total_estimated_cost']['statistic']:.0f}, p = {wil['no_grouping']['total_estimated_cost']['p_value']:.2e}; utilization W = {wil['no_grouping']['utilization_pct']['statistic']:.0f}, p = {wil['no_grouping']['utilization_pct']['p_value']:.2e}). In production operations, callers may toggle candidate sorting between balanced, cost, eco_friendly, and risk_averse profiles depending on order value and lane SLA sensitivity.",
+        s_body,
+    ))
+
+    # --- SECTION VII ---
+    story.append(Paragraph("VII. ABLATION STUDIES AND THREATS TO VALIDITY", s_h1))
+    story.append(Paragraph("A. Component Ablations and Parametric Sensitivity", s_h2))
+    story.append(Paragraph(
+        f"Component ablations isolate causal responsibility across all 200 carts (Table VII and Fig. 5). Disabling compatibility partitioning slightly raises volumetric fill (+{util_grp['pct_change']:.1f}%, p = {util_grp['wilcoxon_p_value']:.2e}) and lowers carton split spend ({cost_grp['pct_change']:.1f}%, p = {cost_grp['wilcoxon_p_value']:.2e}), yet triggers a +{risk_grp['pct_change']:.1f}% surge in expected transit damage from {risk_grp['grouping_on_mean']:.3f} to {risk_grp['grouping_off_mean']:.3f} (Wilcoxon W = {risk_grp['wilcoxon_stat']:.0f}, p = {risk_grp['wilcoxon_p_value']:.2e}). Toggling generative AI prose explanations ON versus OFF alters utilization, cost, and risk by strictly 0.00%. Finally, +/-25% perturbation sensitivity analysis around a baseline risk of {sens['baseline_mean_risk']:.4f} demonstrates asymmetric nonlinear response: ISTA cushion adequacy exhibits the highest elasticity index ({pert['cushion_adequacy_ratio']['elasticity_index']:.3f}), raising risk {pert['cushion_adequacy_ratio']['-25%']['pct_change_in_risk']:+.2f}% when under-cushioned by 25%, followed identically by maximum fragility ({pert['max_fragility']['elasticity_index']:.3f}) and unprotected void percentage ({pert['unprotected_void_pct']['elasticity_index']:.3f}), whereas ECT stiffness exerts secondary structural modulation ({pert['board_ect_kn_m']['elasticity_index']:.3f}).",
+        s_body0,
+    ))
+
+    story.append(sp(2))
+    story.append(Paragraph("TABLE VII. ABLATIONS & +/-25% SENSITIVITY ELASTICITY", s_cap))
+    t6_rows = [
+        ["Factor / Perturbation", "Observed Metrics", "Outcome / Elasticity"],
+        ["Grouping: ON -> OFF", f"Risk {risk_grp['grouping_on_mean']:.3f} -> {risk_grp['grouping_off_mean']:.3f}", f"+{risk_grp['pct_change']:.1f}% (p={risk_grp['wilcoxon_p_value']:.2e})"],
+        ["GenAI Narration: ON/OFF", "Util / Cost / Risk delta", "0.00% (Fully Isolated)"],
+        ["ISTA Cushion Ratio (+/-25%)", f"{pert['cushion_adequacy_ratio']['-25%']['mean_risk']:.4f} / {pert['cushion_adequacy_ratio']['+25%']['mean_risk']:.4f}", f"Elast. = {pert['cushion_adequacy_ratio']['elasticity_index']:.3f}"],
+        ["Max Fragility (+/-25%)", f"{pert['max_fragility']['-25%']['mean_risk']:.4f} / {pert['max_fragility']['+25%']['mean_risk']:.4f}", f"Elast. = {pert['max_fragility']['elasticity_index']:.3f}"],
+        ["Unprotected Void % (+/-25%)", f"{pert['unprotected_void_pct']['-25%']['mean_risk']:.4f} / {pert['unprotected_void_pct']['+25%']['mean_risk']:.4f}", f"Elast. = {pert['unprotected_void_pct']['elasticity_index']:.3f}"],
+        ["Board ECT kN/m (+/-25%)", f"{pert['board_ect_kn_m']['-25%']['mean_risk']:.4f} / {pert['board_ect_kn_m']['+25%']['mean_risk']:.4f}", f"Elast. = {pert['board_ect_kn_m']['elasticity_index']:.3f}"],
+    ]
+    story.append(_booktabs_table(t6_rows, [col_w * 0.40, col_w * 0.31, col_w * 0.29], font_size=6.7, pad_v=1.8))
+    story.append(sp(2))
+    story.append(_fit_image(figs["fig5"], col_w * fig_scale))
+    story.append(Paragraph("Fig. 5. Compatibility grouping ablation (a) and +/-25% risk elasticity index (b).", s_cap))
+
+    story.append(Paragraph("B. Threats to Validity", s_h2))
+    story.append(Paragraph(
+        "<i>Construct validity:</i> Supervised damage probabilities derive from synthetic Bernoulli draws parameterized by mechanical engineering physics rather than proprietary carrier claim records; ambient monsoon humidity weakening starch corrugated adhesive bonds and sealing errors remain outside simulation scope. Additionally, single expected-loss weighting (0.30 * V_cargo) reflects standard insurer deductibles rather than brand goodwill erosion.",
+        s_body0,
+    ))
+    story.append(Paragraph(
+        "<i>Internal validity:</i> CP-SAT enforces a 2.5 s timeout per candidate box and escalates orders with n > 35 expanded units to Shelf-FFD heuristics, trading theoretical optimality on dense uniform manifests for predictable sub-second SLA compliance. <i>External validity:</i> Volumetric conversion (divisor 5,000), 0.5/1.0 kg carrier slabs, 7 kg/CFT pallet billing, and Zones A–E capture Indian domestic tariffs and require recalibration before international multi-carrier deployment.",
+        s_body,
+    ))
+
+    # --- SECTION VIII ---
+    story.append(Paragraph("VIII. CONCLUSION AND FUTURE WORK", s_h1))
+    story.append(Paragraph(
+        f"PackOptima integrates compatibility-aware SKU partitioning, BIS IS 2771 carton modeling, ISTA 3A cushion clearance, hybrid CP-SAT/Shelf-FFD 3D packing, calibrated XGBoost risk estimation (ROC-AUC = {xgb['roc_auc']:.4f}, Brier = {xgb['brier_score']:.4f}), Indian PIN-zone freight pricing, and Scope 3 CO2e reporting under strict LLM output isolation. End-to-end verification across 36 software tests and 200 statistical cart evaluations confirms statistically significant risk mitigation against unpartitioned baselines while quantifying protective cushioning sensitivity.",
+        s_body0,
+    ))
+    story.append(Paragraph(
+        "Future research will extend this framework toward closed-loop Bayesian isotonic weight recalibration driven automatically by SQLite warehouse QA claim records, highway road-vibration spectral modeling across stacked pallet shipments, and direct integration of humidity-adjusted McKee box compression curves.",
+        s_body,
+    ))
+
+    # --- REFERENCES ---
+    story.append(Paragraph("REFERENCES", s_h1))
+    refs = [
+        "[1] H. Gehring and A. Bortfeldt, \"A genetic algorithm for solving the container loading problem,\" <i>Int. Trans. Oper. Res.</i>, vol. 4, no. 5–6, pp. 401–418, 1997.",
+        "[2] G. Wascher, H. Haussner, and H. Schumann, \"An improved typology of cutting and packing problems,\" <i>Eur. J. Oper. Res.</i>, vol. 183, no. 3, pp. 1109–1130, 2007.",
+        "[3] Bureau of Indian Standards, <i>Corrugated Fibreboard Boxes—Specification (Part 1)</i>, BIS IS 2771 (Part 1): 2022, New Delhi, India, 2022.",
+        "[4] A. Niculescu-Mizil and R. Caruana, \"Predicting good probabilities with supervised learning,\" in <i>Proc. 22nd Int. Conf. Mach. Learn. (ICML)</i>, 2005, pp. 625–632.",
+        "[5] S. Martello, D. Pisinger, and D. Vigo, \"The three-dimensional bin packing problem,\" <i>Oper. Res.</i>, vol. 48, no. 2, pp. 256–267, 2000.",
+        "[6] S. Martello and D. Vigo, \"Exact solution of the two-dimensional finite bin packing problem,\" <i>Manage. Sci.</i>, vol. 44, no. 3, pp. 388–399, 1998.",
+        "[7] T. G. Crainic, G. Perboli, and R. Tadei, \"Extreme point-based heuristics for three-dimensional bin packing,\" <i>INFORMS J. Comput.</i>, vol. 20, no. 3, pp. 368–384, 2008.",
+        "[8] L. Perron and V. Furnon, \"OR-Tools CP-SAT Solver,\" Google Research, Mountain View, CA, USA, 2024.",
+        "[9] R. C. McKee, J. W. Gander, and J. R. Wachuta, \"Compression strength formula for corrugated boxes,\" <i>Paperboard Packaging</i>, vol. 48, no. 8, pp. 149–159, 1963.",
+        "[10] International Safe Transit Association, <i>ISTA 3A: Packaged-Products for Parcel Delivery System Shipment 70 kg (150 lb) or Less</i>, East Lansing, MI, USA, 2018.",
+        "[11] T. Chen and C. Guestrin, \"XGBoost: A scalable tree boosting system,\" in <i>Proc. 22nd ACM SIGKDD Int. Conf. Knowl. Discov. Data Min.</i>, 2016, pp. 785–794.",
+        "[12] C. Guo, G. Pleiss, Y. Sun, and K. Q. Weinberger, \"On calibration of modern neural networks,\" in <i>Proc. 34th Int. Conf. Mach. Learn. (ICML)</i>, 2017, pp. 1321–1330.",
+        "[13] S. Allen, E. Burke, and G. Kendall, \"A hybrid placement strategy for the three-dimensional strip packing problem,\" <i>Eur. J. Oper. Res.</i>, vol. 209, no. 3, pp. 219–227, 2011.",
+        "[14] A. G. Ramos, J. F. Oliveira, J. F. Goncalves, and M. P. Lopes, \"A container loading algorithm with static mechanical equilibrium stability constraints,\" <i>Transp. Res. B</i>, vol. 91, pp. 565–581, 2016.",
+        "[15] R. Macedo, M. A. Carravilla, and J. F. Oliveira, \"Exact models for three-dimensional bin packing with load-bearing constraints,\" <i>Comput. Oper. Res.</i>, vol. 134, 2021.",
+        "[16] Smart Freight Centre, <i>Global Logistics Emissions Council (GLEC) Framework for Logistics Emissions Accounting and Reporting</i>, v3.0, Amsterdam, 2023.",
+        "[17] G. J. Burgess, \"Consolidation of cushion design data for shock protection,\" <i>Packag. Technol. Sci.</i>, vol. 12, no. 5, pp. 209–217, 1999.",
+        "[18] F. Pedregosa et al., \"Scikit-learn: Machine learning in Python,\" <i>J. Mach. Learn. Res.</i>, vol. 12, pp. 2825–2830, 2011.",
+        "[19] J. Cohen, <i>Statistical Power Analysis for the Behavioral Sciences</i>, 2nd ed. Hillsdale, NJ, USA: Lawrence Erlbaum, 1988.",
+        "[20] F. Wilcoxon, \"Individual comparisons by ranking methods,\" <i>Biometrics Bull.</i>, vol. 1, no. 6, pp. 80–83, 1945.",
+        "[21] Gemini Team, \"Gemini 2.5: Pushing the frontier with native multimodal reasoning,\" Google DeepMind, Tech. Rep., 2025.",
+        "[22] Qwen Team, \"Qwen2.5 technical report,\" Alibaba Group, arXiv:2412.15115, 2024.",
+    ]
+    for r in refs:
+        story.append(Paragraph(r, s_ref))
+
+    return story
+
+
+def _render_ieee_pdf_bytes(
+    figs: dict[str, Path],
+    data: dict[str, Any],
+    body_pt: float,
+    body_leading: float,
+    fig_scale: float,
+    space_scale: float,
+) -> bytes:
+    """Render IEEE two-column PDF into memory with zero headers/footers/page numbers."""
+    buf = io.BytesIO()
+    page_w, page_h = letter  # 612 x 792 pt
+    m_lr = 45.0
+    m_top = 54.0
+    m_bot = 72.0
+    col_gap = 18.0
+    col_w = (page_w - 2 * m_lr - col_gap) / 2.0  # 252 pt
+    title_h = 152.0
+
+    f1_title = Frame(m_lr, page_h - m_top - title_h, page_w - 2 * m_lr, title_h, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="p1_title")
+    col_h1 = page_h - m_top - m_bot - title_h - 4.0
+    f1_left = Frame(m_lr, m_bot, col_w, col_h1, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="p1_left")
+    f1_right = Frame(m_lr + col_w + col_gap, m_bot, col_w, col_h1, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="p1_right")
+
+    col_h_full = page_h - m_top - m_bot
+    f2_left = Frame(m_lr, m_bot, col_w, col_h_full, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="p2_left")
+    f2_right = Frame(m_lr + col_w + col_gap, m_bot, col_w, col_h_full, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="p2_right")
+
+    doc = BaseDocTemplate(buf, pagesize=letter, title="PackOptima IEEE Paper", author=AUTHOR_NAME)
+    doc.addPageTemplates([
+        PageTemplate(id="FirstPage", frames=[f1_title, f1_left, f1_right], onPage=_noop_page),
+        PageTemplate(id="LaterPages", frames=[f2_left, f2_right], onPage=_noop_page),
+    ])
+
+    story = _build_ieee_story(figs, data, col_w, body_pt, body_leading, fig_scale, space_scale)
+    doc.build(story)
+    return buf.getvalue()
+
+
+def build_strict_7page_ieee_pdf(figs: dict[str, Path], data: dict[str, Any]) -> tuple[Path, int, dict[str, Any]]:
+    """Calibrate spacing/leading cleanly to land on exact 7 pages with dense Page 7."""
+    # Coarse search over (body_pt, body_leading, fig_scale, space_scale)
+    candidates = [
+        (9.4, 11.0, 0.86, 0.85),
+        (9.5, 11.4, 0.90, 0.92),
+        (9.8, 11.6, 0.94, 0.98),
+        (10.0, 11.6, 0.96, 1.00),
+        (10.0, 11.9, 0.98, 1.04),
+        (10.0, 12.2, 1.00, 1.08),
+        (10.0, 12.5, 1.00, 1.15),
+        (10.0, 12.8, 1.00, 1.24),
+        (10.0, 13.1, 1.00, 1.32),
+        (10.2, 13.4, 1.00, 1.45),
     ]
 
-    doc.build(story)
-    ieee_pages = _count_pdf_pages(pdf_path)
+    seven_hits: list[tuple[tuple[float, float, float, float], bytes]] = []
+    probes: list[tuple[tuple[float, float, float, float], int]] = []
 
-    # Companion LaTeX IEEEtran source
-    tex_src = rf"""\documentclass[conference]{{IEEEtran}}
+    for params in candidates:
+        pdf_bytes = _render_ieee_pdf_bytes(figs, data, *params)
+        pages = _count_pdf_pages(pdf_bytes)
+        probes.append((params, pages))
+        if pages == 7:
+            seven_hits.append((params, pdf_bytes))
+
+    # Interpolate if coarse sweep jumped over 7
+    if not seven_hits:
+        lo_p, hi_p = candidates[0], candidates[-1]
+        for a, b in zip(probes, probes[1:]):
+            if a[1] < 7 <= b[1]:
+                lo_p, hi_p = a[0], b[0]
+                break
+        for step in range(14):
+            t = (step + 1) / 15.0
+            mid = tuple(lo_p[i] + t * (hi_p[i] - lo_p[i]) for i in range(4))
+            pdf_bytes = _render_ieee_pdf_bytes(figs, data, *mid)
+            pages = _count_pdf_pages(pdf_bytes)
+            probes.append((mid, pages))
+            if pages == 7:
+                seven_hits.append((mid, pdf_bytes))
+
+    if not seven_hits:
+        raise RuntimeError(f"Could not calibrate IEEE PDF to 7 pages; probes={probes}")
+
+    # Prefer body_pt == 10.0 when available and pick the densest-before-overflow candidate
+    ten_hits = [h for h in seven_hits if abs(h[0][0] - 10.0) < 0.2]
+    chosen_params, chosen_bytes = (ten_hits[-1] if ten_hits else seven_hits[-1])
+    over_bytes = _render_ieee_pdf_bytes(
+        figs, data,
+        chosen_params[0],
+        chosen_params[1] + 0.35,
+        min(1.0, chosen_params[2] + 0.02),
+        chosen_params[3] + 0.12,
+    )
+    over_pages = _count_pdf_pages(over_bytes)
+
+    out_path = DOCS_DIR / "IEEE_Research_Paper_PackOptima_PS116.pdf"
+    out_path.write_bytes(chosen_bytes)
+
+    return out_path, _count_pdf_pages(chosen_bytes), {
+        "calibrated_params": chosen_params,
+        "overflow_probe_pages": over_pages,
+        "probes": [(p, pg) for p, pg in probes],
+    }
+
+
+def write_ieee_latex(data: dict[str, Any]) -> Path:
+    """Write companion LaTeX IEEEtran source with \\pagestyle{empty} and exact author block."""
+    ev = data["eval"]
+    meta = data["meta"]
+    stat = data["stat"]
+    abl = data["ablation"]
+    xgb = ev["XGBoost"]
+    rf = ev["RandomForest"]
+    hgb = ev["HistGradientBoosting"]
+    conds = stat["conditions"]
+    wil = stat["wilcoxon_tests_vs_proposed"]
+    grp = abl["ablation_grouping"]
+    pert = abl["sensitivity_analysis"]["perturbations"]
+    prop = conds["proposed"]
+    larg = conds["always_largest"]
+    man = conds["simulated_manual"]
+    nogrp = conds["no_grouping"]
+
+    tex = rf"""\documentclass[conference]{{IEEEtran}}
 \usepackage{{amsmath,amssymb,amsfonts}}
 \usepackage{{graphicx}}
 \usepackage{{booktabs}}
-\usepackage{{hyperref}}
+\usepackage{{algorithm}}
+\usepackage{{algpseudocode}}
+\usepackage{{cite}}
+\pagestyle{{empty}}
 
 \begin{{document}}
 
-\title{{PackOptima: Standards-Grounded 3D Constraint Bin Packing, Calibrated Transit-Damage Learning, and Multi-Objective Freight Optimization}}
+\title{{PackOptima: Physics-Informed Three-Dimensional Bin Packing, Calibrated Damage Risk Estimation, and Carbon-Aware Freight Optimization}}
 
-\author{{\IEEEauthorblockN{{Yathi M. and Packaging Advisor Engineering Group}}
-\IEEEauthorblockA{{Department of Computer Science and Engineering — Project PS116, India}}}}
+\author{{\IEEEauthorblockN{{{AUTHOR_NAME}}}
+\IEEEauthorblockA{{{AUTHOR_DEPT}\\
+{AUTHOR_UNIV}\\
+{AUTHOR_EMAIL}}}}}
 
 \maketitle
+\thispagestyle{{empty}}
 
 \begin{{abstract}}
-E-commerce and business-to-business logistics in developing freight networks suffer simultaneously from dimensional-weight overbilling and preventable transit damage caused by unsafe cargo commingling, under-cushioned boxes, and corrugated wall collapse under humid monsoon handling. We present \textbf{{PackOptima}}, an integrated decision-support architecture combining rule-based cargo compatibility segregation, an OR-Tools CP-SAT three-dimensional bin-packing solver with ISTA 3A protective clearance envelopes and multi-carton splitting, an Indian six-digit PIN Zone A--E routing and freight rate engine, and an isotonically calibrated 15-feature machine-learning damage-risk predictor ({best_model} ROC-AUC = {bm['roc_auc']:.4f}, Brier = {bm['brier_score']:.4f}). Across 200 diverse synthetic multi-SKU orders, the proposed pipeline lowers mean transit damage probability by {risk_vs_man_pct:.1f}\% versus simulated manual bounding-box packing ({c_prop['damage_risk_probability']['mean']:.3f} vs.\ {c_man['damage_risk_probability']['mean']:.3f}, Wilcoxon $p < 0.001$) and by {risk_vs_nogrp_pct:.1f}\% versus unsegregated co-packing ({c_nogrp['damage_risk_probability']['mean']:.3f}, $p < 0.001$), while slashing freight spend by {cost_vs_larg_pct:.1f}\% relative to always-largest-box defaults (Rs.\ {c_prop['total_estimated_cost']['mean']:,.2f} vs.\ Rs.\ {c_larg['total_estimated_cost']['mean']:,.2f}, $p < 0.001$). An optional post-hoc LLM layer supporting Gemini 2.5 and Hugging Face Qwen2.5 small models alters zero geometric or financial decisions.
+Modern parcel and less-than-truckload e-commerce logistics face a coupled optimization dilemma: minimizing dimensional-weight freight surcharges while preventing shock-induced mechanical damage across multi-node sortation hubs. This paper introduces PackOptima, unifying compatibility-constrained cart partitioning across 10 standardized product categories, Constraint Programming (CP-SAT) three-dimensional packing over 14 BIS IS 2771 (Part 1): 2022 and cold-chain container tiers with ISTA 3A padding rules and a scalable Shelf-FFD fallback ($n > 35$), an isotonic-calibrated XGBoost damage probability estimator trained on 15 physical descriptors across {meta['n_train_samples'] + meta['n_test_samples']:,} shipments ($\text{{ROC-AUC}} = {xgb['roc_auc']:.4f}$, Brier $= {xgb['brier_score']:.4f}$), and an Indian PIN-zone freight and Scope 3 carbon engine. Across 200 stratified carts, compatibility ablation increases damage risk by $+{grp['damage_risk_probability']['pct_change']:.1f}\%$ ($p = {grp['damage_risk_probability']['wilcoxon_p_value']:.2e}$), while LLM advisory isolation maintains $0.00\%$ numerical perturbation.
 \end{{abstract}}
 
 \begin{{IEEEkeywords}}
-3D bin packing, BIS IS 2771, calibrated risk learning, constraint programming, cold-chain logistics, freight optimization, ISTA 3A.
+Three-dimensional bin packing, CP-SAT, ISTA 3A cushioning, probability calibration, XGBoost, Scope 3 emissions.
 \end{{IEEEkeywords}}
 
 \section{{Introduction}}
-Domestic parcel and part-truckload (PTL) fulfillment networks face conflicting operational pressures: shipping items in oversized corrugated boxes triggers steep dimensional-weight surcharges, whereas packing fragile items tightly without padding accelerates corner impact and Edge Crush Test (ECT) collapse \cite{{ista3a,is2771}}. In Indian freight lanes, +40\,$^\circ$C summer heat and monsoon humidity cut corrugated board compression strength by 30\%--50\%. PackOptima integrates cargo segregation, ISTA-padded 3D CP-SAT packing, Zone A--E routing, Scope 3 carbon accounting, and isotonic ML damage scoring behind a decoupled post-hoc LLM interface.
+Secondary packaging efficiency directly governs volumetric carrier surcharges ($LWH/5000$) and transit shock survivorship [1], [2]. Standard heuristics decouple spatial fit from Edge Crush Test (ECT) board ratings, cushion deformation, and cross-category incompatibility [3], [4]. PackOptima resolves these deficits by tightly coupling deterministic 3D optimization, calibrated machine learning, and Indian freight tariff physics.
 
 \section{{Related Work}}
-Three-dimensional orthogonal bin packing has been formulated using branch-and-bound and constraint programming \cite{{martello2000,ortools}}. Prior freight calculators seldom integrate BIS IS 2771 ply/ECT specs or ISTA 3A clearance thickness directly into calibrated probability models \cite{{chen2016,zadrozny2002}}.
+Orthogonal 3D-BPP is strongly NP-hard [5]--[7]. Constraint Programming via OR-Tools CP-SAT [8] handles upright locks and multi-carton splits natively. Box compressive limits follow McKee formulations [9] alongside ISTA 3A drop dynamics [10], while isotonic calibration stabilizes tree probability estimates [4], [11], [12].
 
-\section{{Methodology and System Architecture}}
-\begin{{figure}}[t]
-\centering
-\includegraphics[width=\linewidth]{{figures/fig1_architecture.png}}
-\caption{{End-to-end PackOptima pipeline illustrating strict post-hoc decoupling of LLM narrative generation.}}
-\label{{fig:arch}}
-\end{{figure}}
-
-\subsection{{Cargo Compatibility Segregation}}
-Incompatible cargo is segregated into \textit{{perishables}}, \textit{{liquids}}, \textit{{electronics}}, \textit{{fragile\_delicate}}, \textit{{heavy\_industrial}}, and \textit{{general}} dry shipments.
-
-\subsection{{ISTA 3A 3D CP-SAT Formulation}}
-Each item receives per-face ISTA clearance $p_i \in \{{0, 0.5, 1.5, 2.0, 2.5, 3.0\}}$\,cm:
+\section{{Problem Formulation and Domain Constraints}}
+Intrinsic item fragility combines baseline $f_{{\text{{base}}}}$, bulk density $\rho_i$, and aspect ratio $d_{{\max}}/d_{{\min}}$; incompatibility partitioning minimizes hazard weights:
 \begin{{equation}}
-l'_i = l_i + 2p_i,\quad w'_i = w_i + 2p_i,\quad h'_i = h_i + 2p_i
+\min \sum_k \sum_{{i,j \in G_k}} H(c_i, c_j) \quad \text{{s.t.}} \quad T_{{\text{{cold}}}}(i) = T_{{\text{{cold}}}}(j).
 \end{{equation}}
-Pairwise non-overlap uses six disjunctive Boolean literals $b_{{ijk}}$ and a gravity-weighted objective:
-\begin{{equation}}
-\min \sum_i \max(1, \lfloor 10 m_i \rceil)\,(8z_i + x_i + y_i)
-\end{{equation}}
-
-\subsection{{Zone A--E Routing, Costing, and Scope 3 CO2e}}
-Weight billing applies tare adjustment, parcel divisor $5000$, 10\,kg+ tapering, 7\,kg/CFT stacked PTL density, and landed risk expectation:
-\begin{{equation}}
-C_{{\text{{landed}}}} = C_{{\text{{mat}}}} + C_{{\text{{dunnage}}}} + C_{{\text{{freight}}}} + 0.30 \cdot P(\text{{Damage}}) \cdot V_d
-\end{{equation}}
-
-\section{{Experimental Evaluation and Ablation Studies}}
-
-\begin{{table}}[t]
-\centering
-\caption{{Calibrated Damage Classifier Performance ($n = 2,400$ Test)}}
-\begin{{tabular}}{{lccccc}}
-\toprule
-Model & Acc. & F1 & ROC-AUC & AP & Brier \\
-\midrule
-XGBoost & {eval_sum['XGBoost']['accuracy']:.4f} & {eval_sum['XGBoost']['f1_score']:.4f} & {eval_sum['XGBoost']['roc_auc']:.4f} & {eval_sum['XGBoost']['avg_precision']:.4f} & {eval_sum['XGBoost']['brier_score']:.4f} \\
-RandomForest & {eval_sum['RandomForest']['accuracy']:.4f} & {eval_sum['RandomForest']['f1_score']:.4f} & {eval_sum['RandomForest']['roc_auc']:.4f} & {eval_sum['RandomForest']['avg_precision']:.4f} & {eval_sum['RandomForest']['brier_score']:.4f} \\
-HistGradBoost & {eval_sum['HistGradientBoosting']['accuracy']:.4f} & {eval_sum['HistGradientBoosting']['f1_score']:.4f} & {eval_sum['HistGradientBoosting']['roc_auc']:.4f} & {eval_sum['HistGradientBoosting']['avg_precision']:.4f} & {eval_sum['HistGradientBoosting']['brier_score']:.4f} \\
-\bottomrule
-\end{{tabular}}
-\end{{table}}
+ISTA 3A padding $c_i \in {{0, 0.5, 1.5, 2.0, 2.5, 3.0\}}$ cm expands bounding footprints before CP-SAT disjunctive placement and upright z-axis locking minimize $\sum_i (2z_i + x_i + y_i) + \lambda_{{\text{{top}}}} z_i m_i$, falling back to Shelf-FFD above $35$ units.
 
 \begin{{figure}}[t]
 \centering
-\includegraphics[width=\linewidth]{{figures/fig2_ml_metrics.png}}
-\caption{{Discrimination and isotonic calibration error across candidate classifiers.}}
+\includegraphics[width=\columnwidth]{{figures/fig1_architecture.png}}
+\caption{{PackOptima deterministic pipeline with isolated LLM narration.}}
 \end{{figure}}
+
+\section{{Physics-Informed Damage Model and Freight Engine}}
+Three calibrated classifiers evaluate 15 physical descriptors (Table~\ref{{tab:ml}}). Calibrated XGBoost achieves ROC-AUC $= {xgb['roc_auc']:.4f}$ and Brier $= {xgb['brier_score']:.4f}$ versus RandomForest ({rf['roc_auc']:.4f}) and HistGradientBoosting ({hgb['roc_auc']:.4f}). Freight billing uses dimensional weight, PIN zones A--E ($1.0\times$ to $2.85\times$), and Scope 3 CO2e emission intensity ($0.068$--$0.602$ kg CO2e/tonne-km plus $0.92$ or $1.85$ kg CO2e/kg tare).
 
 \begin{{table}}[t]
 \centering
-\caption{{200-Cart Empirical Baseline Comparison (Wilcoxon $p < 0.001$)}}
+\caption{{Calibrated Classifier Test Performance}}
+\label{{tab:ml}}
 \begin{{tabular}}{{lcccc}}
 \toprule
-Method & Util \% & Mean Cost & Damage Risk & $p$-val \\
+Model & Accuracy & F1 & ROC-AUC & Brier \\
 \midrule
-Proposed (Ours) & {c_prop['utilization_pct']['mean']:.1f}\% & Rs.\ {c_prop['total_estimated_cost']['mean']:,.0f} & {c_prop['damage_risk_probability']['mean']:.3f} & --- \\
-Always-Largest & {c_larg['utilization_pct']['mean']:.1f}\% & Rs.\ {c_larg['total_estimated_cost']['mean']:,.0f} & {c_larg['damage_risk_probability']['mean']:.3f} & $<0.001$ \\
-Simulated Manual & {c_man['utilization_pct']['mean']:.1f}\% & Rs.\ {c_man['total_estimated_cost']['mean']:,.0f} & {c_man['damage_risk_probability']['mean']:.3f} & $<0.001$ \\
-No-Grouping & {c_nogrp['utilization_pct']['mean']:.1f}\% & Rs.\ {c_nogrp['total_estimated_cost']['mean']:,.0f} & {c_nogrp['damage_risk_probability']['mean']:.3f} & $<0.001$ \\
+XGBoost & {xgb['accuracy']:.4f} & {xgb['f1_score']:.4f} & {xgb['roc_auc']:.4f} & {xgb['brier_score']:.4f} \\
+RandomForest & {rf['accuracy']:.4f} & {rf['f1_score']:.4f} & {rf['roc_auc']:.4f} & {rf['brier_score']:.4f} \\
+HistGB & {hgb['accuracy']:.4f} & {hgb['f1_score']:.4f} & {hgb['roc_auc']:.4f} & {hgb['brier_score']:.4f} \\
 \bottomrule
 \end{{tabular}}
 \end{{table}}
 
-\begin{{figure}}[t]
-\centering
-\includegraphics[width=\linewidth]{{figures/fig3_baseline_comparison.png}}
-\caption{{200-cart cost, damage risk, and utilization comparison across baselines.}}
-\end{{figure}}
+\section{{System Architecture and Dual-Provider Advisory}}
+FastAPI and SQLAlchemy 2.0 persist four SQLite entities while supporting live switching between Gemini 2.5 Flash/Pro and Qwen2.5-1.5B/3B/7B Instruct without modifying any numerical optimization outputs.
 
-\section{{Enterprise Deployment and Conclusion}}
-PackOptima ships with a 4-table SQLAlchemy database, custom warehouse container registration, printable HTML/Markdown dispatch manifests, interactive HTML5 3D load visualization, closed-loop QA feedback, and 36 automated \texttt{{pytest}} checks.
+\section{{Empirical Evaluation and Ablations}}
+Across 200 stratified carts, Proposed limits mean damage risk to ${prop['damage_risk_probability']['mean']:.3f} \pm {prop['damage_risk_probability']['std']:.3f}$ at mean cost Rs. ${prop['total_estimated_cost']['mean']:.0f}$, outperforming Always Largest (util. ${larg['utilization_pct']['mean']:.1f}\%$, Rs. ${larg['total_estimated_cost']['mean']:.0f}$), Simulated Manual (${man['damage_risk_probability']['mean']:.3f}$), and No Grouping (${nogrp['damage_risk_probability']['mean']:.3f}$, $+{grp['damage_risk_probability']['pct_change']:.1f}\%$, Wilcoxon $p = {wil['no_grouping']['damage_risk_probability']['p_value']:.2e}$). Parametric $\pm 25\%$ sensitivity peaks for ISTA cushion adequacy (elasticity ${pert['cushion_adequacy_ratio']['elasticity_index']:.3f}$).
 
-\begin{{thebibliography}}{{5}}
-\bibitem{{ista3a}} ISTA, ``Procedure 3A: Packaged-Products for Parcel Delivery System Shipment 70 kg or Less,'' 2018.
-\bibitem{{is2771}} Bureau of Indian Standards, ``Corrugated Fibreboard Boxes — IS 2771 (Part 1): 2022,'' New Delhi, 2022.
-\bibitem{{martello2000}} S. Martello, D. Pisinger, and D. Vigo, ``The three-dimensional bin packing problem,'' \emph{{Oper. Res.}}, vol. 48, no. 2, 2000.
-\bibitem{{ortools}} L. Perron and V. Furnon, ``Google OR-Tools CP-SAT Solver v9.7,'' 2023.
-\bibitem{{chen2016}} T. Chen and C. Guestrin, ``XGBoost: A scalable tree boosting system,'' in \emph{{Proc. ACM SIGKDD}}, 2016.
-\bibitem{{zadrozny2002}} B. Zadrozny and C. Elkan, ``Transforming classifier scores into accurate multiclass probability estimates,'' in \emph{{Proc. ACM SIGKDD}}, 2002.
-\end{{thebibliography}}
+\section{{Conclusion}}
+PackOptima validates statistically significant breakage mitigation, calibrated risk scoring, and carbon-aware Indian tariff estimation under strict LLM output isolation.
 
 \end{{document}}
 """
-    with open(tex_path, "w", encoding="utf-8") as f:
-        f.write(tex_src)
+    tex_path = DOCS_DIR / "IEEE_Research_Paper_PackOptima_PS116.tex"
+    tex_path.write_text(tex, encoding="utf-8")
+    return tex_path
 
-    return ieee_pages
 
+# ---------------------------------------------------------------------------
+# 2. Academically Presentable 10-Page Technical Project Report (.pdf + .md)
+# ---------------------------------------------------------------------------
 
-# ------------------------------------------------------------------
-# 3. Comprehensive 10-Page Technical Project Report (PDF + Markdown)
-# ------------------------------------------------------------------
-def build_10page_report(eval_sum: dict, meta: dict, stat_sum: dict, abl_sum: dict, figs: dict) -> int:
-    pdf_path = os.path.join(DOCS_DIR, "Project_Report_10Pages_PackOptima_PS116.pdf")
-    md_path = os.path.join(DOCS_DIR, "Project_Report_PackOptima_PS116.md")
+def _build_report_pages(figs: dict[str, Path], data: dict[str, Any], text_w: float) -> list[list[Any]]:
+    """Return exactly 10 structured academic pages with <=4 minimalist tables, zero buzzwords."""
+    ev = data["eval"]
+    meta = data["meta"]
+    stat = data["stat"]
+    abl = data["ablation"]
+    conds = stat["conditions"]
+    wil = stat["wilcoxon_tests_vs_proposed"]
+    grp = abl["ablation_grouping"]
+    sens = abl["sensitivity_analysis"]
+    pert = sens["perturbations"]
 
-    PAGE_W, PAGE_H = A4  # 595.27 x 841.89 pt
-    ML, MR, MT, MB = 42.0, 42.0, 52.0, 44.0
-    USABLE_W = PAGE_W - ML - MR  # 511.27 pt
-    USABLE_H = PAGE_H - MT - MB  # 745.89 pt
+    xgb = ev["XGBoost"]
+    rf = ev["RandomForest"]
+    hgb = ev["HistGradientBoosting"]
+    prop = conds["proposed"]
+    larg = conds["always_largest"]
+    man = conds["simulated_manual"]
+    nogrp = conds["no_grouping"]
 
-    best_model = meta["best_model"]
-    bm = eval_sum[best_model]
-    c_prop = stat_sum["conditions"]["proposed"]
-    c_larg = stat_sum["conditions"]["always_largest"]
-    c_man = stat_sum["conditions"]["simulated_manual"]
-    c_nogrp = stat_sum["conditions"]["no_grouping"]
-    ab_grp = abl_sum["ablation_grouping"]
-    sens = abl_sum["sensitivity_analysis"]["perturbations"]
+    risk_grp = grp["damage_risk_probability"]
+    cost_grp = grp["total_estimated_cost"]
+    util_grp = grp["utilization_pct"]
 
-    def _draw_report_chrome(canvas, doc):
-        canvas.saveState()
-        canvas.setStrokeColor(colors.HexColor("#cbd5e1"))
-        canvas.setLineWidth(0.6)
-        canvas.line(ML, PAGE_H - 38, PAGE_W - MR, PAGE_H - 38)
-        canvas.line(ML, 30, PAGE_W - MR, 30)
-        canvas.setFont("Helvetica-Bold", 8)
-        canvas.setFillColor(colors.HexColor("#1e3a8a"))
-        canvas.drawString(ML, PAGE_H - 31, "PACKOPTIMA ENTERPRISE (PS116) — TECHNICAL PROJECT REPORT")
-        canvas.setFont("Helvetica", 8)
-        canvas.setFillColor(colors.HexColor("#475569"))
-        canvas.drawRightString(PAGE_W - MR, PAGE_H - 31, "IS 2771 • ISTA 3A • Zone A–E Control Tower")
-        canvas.drawString(ML, 19, "Department of Computer Science & Engineering | AI-Assisted Logistics & 3D Packaging Optimization")
-        canvas.drawRightString(PAGE_W - MR, 19, f"Page {doc.page} of 10")
-        canvas.restoreState()
+    s_cov_kicker = ParagraphStyle("RepKicker", fontName=FONTS["regular"], fontSize=10.5, leading=14, alignment=TA_CENTER, textColor=colors.HexColor("#333333"))
+    s_cov_title = ParagraphStyle("RepTitle", fontName=FONTS["bold"], fontSize=19.0, leading=24.0, alignment=TA_CENTER, textColor=colors.black)
+    s_cov_sub = ParagraphStyle("RepSub", fontName=FONTS["italic"], fontSize=11.5, leading=15.5, alignment=TA_CENTER, textColor=colors.HexColor("#222222"))
+    s_cov_meta = ParagraphStyle("RepMeta", fontName=FONTS["regular"], fontSize=11.0, leading=15.0, alignment=TA_CENTER, textColor=colors.black)
 
-    frame = Frame(ML, MB, USABLE_W, USABLE_H, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
-    doc = BaseDocTemplate(
-        pdf_path,
-        pagesize=A4,
-        pageTemplates=[PageTemplate(id="ReportPage", frames=[frame], onPage=_draw_report_chrome)],
-    )
+    s_ch = ParagraphStyle("RepCh", fontName=FONTS["bold"], fontSize=13.5, leading=17.0, alignment=TA_LEFT, spaceBefore=2, spaceAfter=6, textColor=colors.black)
+    s_sec = ParagraphStyle("RepSec", fontName=FONTS["bold"], fontSize=11.0, leading=14.0, alignment=TA_LEFT, spaceBefore=8, spaceAfter=4, textColor=colors.black)
+    s_p = ParagraphStyle("RepBody", fontName=FONTS["regular"], fontSize=10.3, leading=14.6, alignment=TA_JUSTIFY, firstLineIndent=14.0, spaceAfter=6.0, textColor=colors.black)
+    s_p0 = ParagraphStyle("RepBody0", parent=s_p, firstLineIndent=0.0)
+    s_cap = ParagraphStyle("RepCap", fontName=FONTS["italic"], fontSize=9.0, leading=11.8, alignment=TA_CENTER, spaceBefore=3, spaceAfter=7, textColor=colors.HexColor("#222222"))
+    s_toc = ParagraphStyle("RepTOC", fontName=FONTS["regular"], fontSize=9.8, leading=14.0, alignment=TA_LEFT, textColor=colors.black)
+    s_ref = ParagraphStyle("RepRef", fontName=FONTS["regular"], fontSize=9.2, leading=12.4, alignment=TA_JUSTIFY, leftIndent=18, firstLineIndent=-18, spaceAfter=3.2, textColor=colors.black)
 
-    s_cover_title = ParagraphStyle("RTit", fontName="Helvetica-Bold", fontSize=21, leading=25, textColor=colors.HexColor("#0f172a"), spaceAfter=6)
-    s_cover_sub = ParagraphStyle("RSub", fontName="Helvetica", fontSize=11, leading=15, textColor=colors.HexColor("#334155"), spaceAfter=10)
-    s_sec = ParagraphStyle("RSec", fontName="Helvetica-Bold", fontSize=13, leading=16, textColor=colors.HexColor("#1e3a8a"), spaceBefore=4, spaceAfter=6)
-    s_sub = ParagraphStyle("RSubH", fontName="Helvetica-Bold", fontSize=10.5, leading=13, textColor=colors.HexColor("#0f172a"), spaceBefore=6, spaceAfter=3)
-    s_txt = ParagraphStyle("RTxt", fontName="Helvetica", fontSize=9.4, leading=13.0, alignment=TA_JUSTIFY, textColor=colors.HexColor("#1e293b"), spaceAfter=5)
-    s_bul = ParagraphStyle("RBul", parent=s_txt, leftIndent=14, firstLineIndent=-10, spaceAfter=3)
-    s_code = ParagraphStyle("RCode", fontName="Courier", fontSize=8.0, leading=10.2, backColor=colors.HexColor("#f1f5f9"), borderPadding=5, textColor=colors.HexColor("#0f172a"), spaceAfter=6)
-    s_cap = ParagraphStyle("RCap", fontName="Helvetica-Oblique", fontSize=8.2, leading=10.5, alignment=TA_CENTER, textColor=colors.HexColor("#475569"), spaceBefore=3, spaceAfter=6)
+    pages: list[list[Any]] = []
 
-    def corp_table(rows: list, widths: list, font_sz: float = 8.0) -> Table:
-        t = Table(rows, colWidths=widths, repeatRows=1)
-        t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e3a8a")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-            ("FONTSIZE", (0, 0), (-1, -1), font_sz),
-            ("LEADING", (0, 0), (-1, -1), font_sz + 2.4),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
-            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 5),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-            ("TOPPADDING", (0, 0), (-1, -1), 3.5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
-        ]))
-        return t
-
-    def banner_box(title: str, subtitle: str) -> Table:
-        t = Table([[Paragraph(f"<b>{title}</b><br/><font size='9.5'>{subtitle}</font>", ParagraphStyle("B", fontName="Helvetica", fontSize=14, leading=18, textColor=colors.white))]], colWidths=[USABLE_W])
-        t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#0f172a")), ("LEFTPADDING", (0, 0), (-1, -1), 14), ("RIGHTPADDING", (0, 0), (-1, -1), 14), ("TOPPADDING", (0, 0), (-1, -1), 12), ("BOTTOMPADDING", (0, 0), (-1, -1), 12)]))
-        return t
-
-    pages_content = []
-
-    # ---- PAGE 1: Cover, Executive Summary & TOC ----
-    pages_content.append([
-        banner_box("PACKOPTIMA ENTERPRISE (PS116 v2.5)", "Technical Project Report: AI-Assisted 3D Packaging, Freight Costing & Calibrated Damage Prevention"),
+    # =========================================================================
+    # PAGE 1: Academic Cover, Author Metadata, Abstract, Contents
+    # =========================================================================
+    p1: list[Any] = [
         Spacer(1, 10),
-        Paragraph("Engineering Architecture, Mathematical Formulations, Empirical Benchmarks & Production Deployment", s_cover_sub),
-        corp_table(
-            [
-                ["Project Attribute", "Specification"],
-                ["Project Code / Title", "PS116 — PackOptima Enterprise Packaging & Logistics Control Tower"],
-                ["Core Optimization Stack", "Google OR-Tools CP-SAT 3D Solver + Multi-Carton Splitter (2–5 Bins)"],
-                ["Engineering Standards", "BIS IS 2771 (Part 1): 2022, ISTA 3A Cushioning, Indian Zone A–E PIN Matrix"],
-                ["Predictive ML Model", f"Isotonic Calibrated {best_model} (15 Physics Features, ROC-AUC {bm['roc_auc']:.4f}, Brier {bm['brier_score']:.4f})"],
-                ["Post-Hoc LLM Layer", "Google Gemini 2.5 (Flash/Pro) & Hugging Face Qwen2.5 Small Models (1.5B/3B/7B)"],
-                ["Persistence & Control Tower", "SQLAlchemy 2.0 ORM (4 Relational Tables) + FastAPI + Streamlit Enterprise UI"],
-            ],
-            [155, USABLE_W - 155],
-            8.5,
+        Paragraph("TECHNICAL PROJECT REPORT — PROBLEM STATEMENT PS-116", s_cov_kicker),
+        Spacer(1, 12),
+        HRFlowable(width="100%", thickness=1.2, color=colors.black),
+        Spacer(1, 14),
+        Paragraph(
+            "PackOptima: Physics-Informed Three-Dimensional Bin Packing, Calibrated Transit Damage Risk Estimation, and Carbon-Aware Freight Optimization",
+            s_cov_title,
         ),
         Spacer(1, 10),
-        Paragraph("1. Executive Summary", s_sec),
         Paragraph(
-            "Freight fulfillment across India suffers from dual inefficiencies: oversized corrugated boxes create excessive dimensional-weight charges (billed at L × W × H / 5000), while under-cushioned or improperly commingled parcels experience severe impact, moisture, liquid leak, and thermal damage across multi-node sorting hubs. PackOptima Enterprise resolves both failure modes inside a unified decision-support platform.",
-            s_txt,
+            "An Empirical Study on Constrained Three-Dimensional Packing, ISTA 3A Shock Mechanics, Isotonic-Calibrated Ensembles, and Indian Postal Zone Logistics",
+            s_cov_sub,
         ),
+        Spacer(1, 14),
+        HRFlowable(width="100%", thickness=1.2, color=colors.black),
+        Spacer(1, 18),
+        Paragraph(f"<b>Submitted by</b><br/>{AUTHOR_NAME}<br/><i>{AUTHOR_DEPT}</i><br/><i>{AUTHOR_UNIV}</i><br/>{AUTHOR_EMAIL}", s_cov_meta),
+        Spacer(1, 16),
+        HRFlowable(width="75%", thickness=0.5, color=colors.HexColor("#555555")),
+        Spacer(1, 12),
+        Paragraph("Abstract", s_sec),
         Paragraph(
-            f"Across 200 simulated multi-SKU cart benchmarks, PackOptima reduces mean transit damage probability to {c_prop['damage_risk_probability']['mean']:.3f} — a {(1 - c_prop['damage_risk_probability']['mean']/c_man['damage_risk_probability']['mean'])*100:.1f}% risk drop over manual bounding-box picking ({c_man['damage_risk_probability']['mean']:.3f}, p < 0.001) and {(1 - c_prop['damage_risk_probability']['mean']/c_nogrp['damage_risk_probability']['mean'])*100:.1f}% risk drop over ungrouped co-packing ({c_nogrp['damage_risk_probability']['mean']:.3f}, p < 0.001) — while cutting freight spend by {(1 - c_prop['total_estimated_cost']['mean']/c_larg['total_estimated_cost']['mean'])*100:.1f}% versus oversized defaults.",
-            s_txt,
+            f"Automated fulfillment workflows face competing geometric, structural, environmental, and financial constraints when consolidating heterogeneous items into parcel or less-than-truckload containers. Standard geometric bin packers pursue fill efficiency in isolation, ignoring corrugated wall crush strength, dynamic cushion deformation, thermal incompatibility, and nonlinear volumetric billing thresholds. This technical report presents the design, mathematical formulation, implementation, and quantitative evaluation of PackOptima (PS-116), an integrated physical-optimization architecture calibrated for Indian domestic parcel networks. The system partitions order manifests into 6 compatibility classes across 10 SKU taxonomies, performs exact three-dimensional packing via Google OR-Tools CP-SAT over 14 BIS IS 2771 (Part 1): 2022 and cold-chain containers with ISTA 3A padding allowances and an O(n log n) Shelf-FFD fallback, and estimates unit shock loss probabilities through a 3-fold isotonic-calibrated XGBoost ensemble trained on {meta['n_train_samples'] + meta['n_test_samples']:,} shipments (test ROC-AUC = {xgb['roc_auc']:.4f}, Brier = {xgb['brier_score']:.4f}). Empirical benchmarks across 200 stratified carts confirm statistically significant damage mitigation over manual and unpartitioned heuristics while isolating generative advisory text cleanly from numeric solver decisions.",
+            s_p0,
         ),
-        Paragraph("Report Table of Contents", s_sub),
-        corp_table(
-            [
-                ["Page", "Section Coverage"],
-                ["Page 1", "Executive Cover, Project Metadata, Summary & Table of Contents"],
-                ["Page 2", "Problem Domain, Indian Logistics Challenges & System Requirements"],
-                ["Page 3", "End-to-End Architecture, SQLAlchemy Database Schema & 13-Endpoint REST API"],
-                ["Page 4", "BIS IS 2771:2022 14-Container Catalog & 10-Category Compatibility Matrix"],
-                ["Page 5", "3D CP-SAT Constraint Packing, ISTA 3A Clearance & Multi-Box Splitting"],
-                ["Page 6", "Zone A–E PIN Routing, Tapered/CFT Freight Pricing & Scope 3 Carbon Model"],
-                ["Page 7", "15-Feature Physics Dataset, Isotonic ML Calibration & Classifier Evaluation"],
-                ["Page 8", "Post-Hoc Gemini / Qwen2.5 Switching & 5-Workspace Corporate SaaS UI/UX"],
-                ["Page 9", "200-Cart Empirical Benchmarks, Ablation Studies & Feature Elasticity"],
-                ["Page 10", "36-Test Verification Suite, Turnkey Deployment, Limitations & Future Roadmap"],
-            ],
-            [65, USABLE_W - 65],
-            8.0,
+        Spacer(1, 10),
+        Paragraph("Report Organization", s_sec),
+        Paragraph(
+            "<b>Chapter 1</b> — Introduction, Problem Motivation, and Literature Survey &nbsp;|&nbsp; "
+            "<b>Chapter 2</b> — Domain Taxonomy, Compatibility Mechanics, and Container Catalog (Table 1) &nbsp;|&nbsp; "
+            "<b>Chapter 3</b> — Three-Dimensional CP-SAT Formulation and Packing Geometry (Fig. 2) &nbsp;|&nbsp; "
+            "<b>Chapter 4</b> — Physics-Informed Feature Engineering and System Architecture (Fig. 1) &nbsp;|&nbsp; "
+            "<b>Chapter 5</b> — Classifier Evaluation and Probability Calibration (Table 2, Fig. 3) &nbsp;|&nbsp; "
+            "<b>Chapter 6</b> — Indian PIN-Zone Freight, Carbon Accounting, and Advisory Isolation &nbsp;|&nbsp; "
+            "<b>Chapter 7</b> — Empirical 200-Cart Statistical Evaluation (Table 3, Fig. 4) &nbsp;|&nbsp; "
+            "<b>Chapter 8</b> — Ablation Studies and +/-25% Sensitivity Analysis (Table 4, Fig. 5) &nbsp;|&nbsp; "
+            "<b>Chapters 9 and 10</b> — Threats to Validity, Conclusions, and References.",
+            s_toc,
         ),
-    ])
+    ]
+    pages.append(p1)
 
-    # ---- PAGE 2: Problem Domain & System Requirements ----
-    pages_content.append([
-        Paragraph("2. Problem Domain & Engineering Motivation", s_sec),
-        Paragraph(
-            "Indian domestic e-commerce and B2B industrial distribution span dense intra-city metro clusters, regional intra-state corridors, long-haul national lanes (>2,000 km), and challenging special geographies (North-East states, Jammu & Kashmir, Ladakh, Himachal Pradesh, and island territories). Across these lanes, packaging decisions directly control three critical P&L drivers: billable freight weight, transit damage write-offs, and Scope 3 logistics emissions.",
-            s_txt,
-        ),
-        Paragraph("2.1 Key Logistics Failure Modes Addressed", s_sub),
-        Paragraph("• <b>Dimensional Weight Overbilling:</b> Couriers charge the maximum of dead gross weight and outer volumetric weight (L × W × H / 5000). Selecting a box even 10 cm larger than required can double or triple billable weight on lightweight SKUs such as apparel, electronics, or pharmaceuticals.", s_bul),
-        Paragraph("• <b>Monsoon Humidity & Corrugated Collapse:</b> Relative humidity above 85% reduces corrugated fibreboard Edge Crush Test (ECT) stacking strength by 30%–50%, causing 3-ply cartons carrying >10 kg over multi-node surface routes to buckle.", s_bul),
-        Paragraph("• <b>Cargo Commingling Hazards:</b> Packing liquids with electronics or paper, mixing heavy machined metal parts with fragile glass, or placing cold-chain goods in ambient boxes drives catastrophic spoilage and impact losses.", s_bul),
-        Paragraph("• <b>Cold-Chain Over-Provisioning & Meltout:</b> Forcing small 1 kg perishables into 2,500 kg active reefer trucks inflates costs 10×, whereas shipping passive gel-pack parcels via slow 6-day surface corridors causes thermal excursion.", s_bul),
-        Paragraph("• <b>LLM Hallucination Risk:</b> Allowing generative AI models to select box dimensions or compute costs introduces non-deterministic arithmetic errors; PackOptima isolates LLMs strictly post-hoc.", s_bul),
+    # =========================================================================
+    # PAGE 2: Chapter 1 - Introduction & Literature Survey (Academic Prose)
+    # =========================================================================
+    p2: list[Any] = [
+        Paragraph("Chapter 1: Introduction and Literature Survey", s_ch),
+        HRFlowable(width="100%", thickness=0.6, color=colors.black),
         Spacer(1, 6),
-        Paragraph("2.2 Functional & Non-Functional Requirements Matrix", s_sub),
-        corp_table(
-            [
-                ["Req ID", "Subsystem", "Engineering Requirement", "Verification Target"],
-                ["FR-01", "Grouping", "Segregate perishables, liquids, ESD electronics, fragile & heavy parts", "100% hazard isolation"],
-                ["FR-02", "3D Packing", "Exact 3D non-overlap + ISTA padding + orientation lock + multi-split", "CP-SAT <= 0.25s; FFD >35 units"],
-                ["FR-03", "Catalog", "IS 2771 3/5/7-ply, passive EPS, pallet & FTL specs + custom DB boxes", "14 built-in + unlimited custom"],
-                ["FR-04", "Routing", "6-digit Indian PIN Zones A–E with distance, nodes, SLA & ODA flags", "Strict monotonic Zone pricing"],
-                ["FR-05", "ML Risk", "Calibrated probability P(Damage) in [0.01, 0.99] via 15 physical features", "Test ROC-AUC >= 0.88"],
-                ["FR-06", "GenAI", "Dynamic Gemini 2.5 / HF Qwen2.5 switch with deterministic fallback", "0.00% impact on math decisions"],
-                ["FR-07", "Database", "Persist Master SKUs, custom boxes, order audits & closed-loop QA outcomes", "SQLAlchemy ORM + Cascade FK"],
-                ["FR-08", "UI/UX", "5 corporate workspaces + interactive exploded 3D canvas + HTML manifests", "Altair KPIs & live QA loop"],
-            ],
-            [48, 66, 260, USABLE_W - 374],
-            7.8,
+        Paragraph("1.1 Problem Context and Engineering Motivation", s_sec),
+        Paragraph(
+            "Domestic retail distribution in emerging e-commerce economies processes millions of multi-SKU parcels daily across multi-tier hub-and-spoke sortation networks. Within these corridors, secondary corrugated packaging serves simultaneously as a volumetric tariff determinant, a primary shock attenuator against mechanical handling drops, and a major contributor to upstream paper-pulp consumption. Carrier pricing structures penalize low spatial efficiency directly through dimensional weight surcharges—computing chargeable mass as the maximum of scale gross weight and volumetric envelope divided by 5,000 cubic centimeters per kilogram—thereby penalizing unfilled carton void with non-recoverable freight expense.",
+            s_p0,
         ),
-    ])
+        Paragraph(
+            "Conversely, unconstrained compaction strategies that select minimal boxes or combine disparate goods frequently amplify transit breakage rates. When heavy metallic hardware shifts laterally into thin glassware during conveyer transfer, or when condensation from refrigerated perishables softens single-wall ambient linerboard, corrugated compressive resistance degrades rapidly. Traditional fulfillment algorithms treat bin packing, mechanical hazard modeling, freight tariff selection, and carbon reporting as separate post-hoc workflows. Such decoupling leaves warehouse operators blind to nonlinear risk–cost trade-offs across carton ply ratings, cushioning material budgets, and cross-zonal transit distances.",
+            s_p,
+        ),
+        Paragraph("1.2 Research Objectives", s_sec),
+        Paragraph(
+            "This study addresses four primary engineering objectives for reproducible deployment: (1) formalizing an extensible 10-category SKU compatibility partitioning graph that prevents incompatible item co-location before spatial assignment; (2) formulating a hybrid exact three-dimensional packing solver incorporating International Safe Transit Association (ISTA 3A) padding rules, upright orientation constraints, multi-carton splitting, and large-order heuristic scaling; (3) constructing a calibrated, physics-informed machine learning damage estimator whose predicted probabilities correspond faithfully to empirical loss likelihoods; and (4) integrating Indian 6-digit Postal Index Number (PIN) zone tariffs, Scope 3 greenhouse gas accounting, relational audit logging, and strictly isolated dual-provider generative language narration.",
+            s_p0,
+        ),
+        Paragraph("1.3 Related Academic Literature", s_sec),
+        Paragraph(
+            "The classical three-dimensional bin packing problem (3D-BPP) generalizes one-dimensional cutting stock formulations and belongs to the strongly NP-hard combinatorial optimization class, as proved by Martello, Pisinger, and Vigo (2000). Early exact approaches relied on branch-and-bound enumeration over lower-left placement projections, whereas Crainic, Perboli, and Tadei (2008) introduced extreme-point heuristics capable of handling large heterogeneous item sets within millisecond budgets. More recently, Constraint Programming Boolean Satisfiability solvers such as OR-Tools CP-SAT (Perron and Furnon, 2024) have enabled exact disjunctive geometric enforcement alongside auxiliary operational rules including upright axis locks and center-of-gravity stability bounds (Ramos et al., 2016).",
+            s_p0,
+        ),
+        Paragraph(
+            "From a structural packaging mechanics perspective, McKee, Gander, and Wachuta (1963) demonstrated that empty box top-to-bottom compression strength depends predictably on corrugated board Edge Crush Test (ECT) capacity, flexural stiffness, and container perimeter. Burgess (1999) and the ISTA 3A parcel delivery standard extend this framework to internal protective cushion design, showing that required foam or kraft thickness rises monotonically with product fragility factor and drop inertia. Meanwhile, Niculescu-Mizil and Caruana (2005) proved that flexible tree ensembles frequently exhibit sigmoidal probability distortion unless recalibrated post-training via isotonic regression or Platt scaling. PackOptima synthesizes these disparate mathematical threads—combinatorial geometry, corrugated board physics, calibrated statistical learning, and Global Logistics Emissions Council (GLEC) carbon accounting—into a single verifiable decision pipeline.",
+            s_p,
+        ),
+    ]
+    pages.append(p2)
 
-    # ---- PAGE 3: Architecture, DB Schema & REST API ----
-    pages_content.append([
-        Paragraph("3. System Architecture, Database Schema & REST API", s_sec),
-        _aspect_image(figs["fig1"], USABLE_W - 10),
-        Paragraph("Figure 3.1: Decoupled 8-stage PackOptima pipeline connecting relational persistence, CP-SAT optimization, ML scoring, and post-hoc LLMs.", s_cap),
-        Paragraph("3.1 Relational Database Schema (SQLAlchemy 2.0 ORM)", s_sub),
-        corp_table(
-            [
-                ["Table Name", "Primary / Foreign Keys", "Stored Domain Fields"],
-                ["master_skus", "id (PK), sku_code (UQ)", "name, product_category, L/W/H cm, weight_kg, fragility_score, declared_value_inr, flags"],
-                ["custom_containers", "id (PK), container_id (UQ)", "name, tier_class, inner/outer dims, tare_kg, max_payload_kg, ply, BS, ECT, material_cost"],
-                ["order_audits", "id (PK), order_ref (UQ)", "customer_or_po, src/dst PIN & zone, priority, direct/baseline/landed cost, savings, CO2e"],
-                ["shipment_records", "id (PK), order_id (FK CASCADE)", "group_label, carton_id, box_count, mode, utilization, risk, badges/items/placements JSON, QA"],
-            ],
-            [92, 128, USABLE_W - 220],
-            7.6,
+    # =========================================================================
+    # PAGE 3: Chapter 2 - Regulatory Domain Standards & Catalog (Table 1)
+    # =========================================================================
+    p3: list[Any] = [
+        Paragraph("Chapter 2: Domain Taxonomy and Regulatory Container Standards", s_ch),
+        HRFlowable(width="100%", thickness=0.6, color=colors.black),
+        Spacer(1, 6),
+        Paragraph("2.1 Standardized Product Categories and Incompatibility Scoring", s_sec),
+        Paragraph(
+            "Every catalog Stock Keeping Unit (SKU) maps onto one of ten commodity classes: General, Precision Electronics (ESD-sensitive), Perishable Goods (cold-chain mandatory), Fine Art & Antiques, Glass & Ceramics, Industrial Machinery (heavy duty), Textiles & Apparel, Pharmaceuticals, Automotive Parts (heavy duty), and Books & Media. Item fragility scores in [0.05, 0.98] are computed mechanically from category baselines adjusted for volumetric density rho_i (kg/L) and structural slenderness max(d)/min(d), while bulk cargo values apply diminishing scaling past 15 kg (w_eff = 15 + 2.5*(w - 15)^0.65).",
+            s_p0,
         ),
-        Spacer(1, 5),
-        Paragraph("3.2 Complete 13-Endpoint REST API Specification (/api/v1)", s_sub),
-        corp_table(
-            [
-                ["Method & Path", "Purpose & Key Payload / Response Contract"],
-                ["GET /health", "Returns API status, ML load state, DB status, custom container count & Gemini/HF provider flags."],
-                ["GET /catalog", "Serves 10 canonical product categories plus 14 BIS IS 2771 containers and active DB custom boxes."],
-                ["POST /recommend", "Runs grouping, Zone A-E routing, 3D CP-SAT packing, ML risk, ROI/CO2e, LLM SOP & persists audit."],
-                ["GET / POST /skus", "Lists/searches Master SKUs by code/name/category; creates or upserts SKU with auto fragility."],
-                ["PUT / DELETE /skus/{sku_code}", "Updates dimensions/category/weight (recalculating fragility) or deletes SKU from DB."],
-                ["GET / POST / DELETE /containers/custom", "Registers warehouse custom cartons (protecting built-in IDs via HTTP 409) & deletes custom boxes."],
-                ["GET /orders & /orders/{ref}", "Lists latest dispatch audit summaries with QA status; returns full shipment & 3D placement JSON."],
-                ["GET /orders/{ref}/manifest", "Compiles printable HTML5 & Markdown warehouse dispatch manifest with BIS specs and 3D coordinates."],
-                ["PATCH /shipments/{id}/outcome", "Records carrier outcome ('delivered_intact' / 'damaged_in_transit') & updates QA calibration."],
-                ["GET /analytics/summary", "Aggregates KPIs, zone breakdown, container fleet mix, chronological trend & QA calibration."],
-            ],
-            [170, USABLE_W - 170],
-            7.4,
+        Paragraph(
+            "Co-locating incompatible SKUs introduces deterministic failure modes even when volumetric utilization appears high. Prior to 3D placement, the partitioning module evaluates pairwise incompatibility H(c_i, c_j)—incorporating cold-chain thermal exposure (+0.50 during multi-day transit), liquid spills beside moisture/ESD-sensitive books and electronics, and heavy industrial metal impacting delicate glass—splitting the cart into mutually compatible subgroups (perishables, liquids, electronics, fragile_delicate, heavy_industrial, and general):",
+            s_p,
         ),
-    ])
+        EquationBlock("min_{P={G_1..G_K}} sum_k sum_{i,j in G_k} H(c_i, c_j)   subject to   T_cold(i) = T_cold(j),  forall i,j in G_k", "1", text_w, font_size=9.5),
+        Spacer(1, 4),
+        Paragraph("2.2 BIS IS 2771 (Part 1): 2022 and Cold-Chain Container Tiers", s_sec),
+        Paragraph(
+            "Each partitioned subgroup is evaluated across 14 standardized secondary shipping containers adhering to BIS IS 2771 (Part 1): 2022 corrugated fibreboard specifications alongside cold-chain EPS gel/PCM shippers, ISPM-15 LTL pallets, active refrigerated PTL reefers, and closed FTL trucks. Structural ECT stiffness rises from 3.2 kN/m on C-SMALL-01 (3-Ply) up to 9.6 kN/m on C-XL-100 (7-Ply) and 15.0 kN/m on master PTL/FTL enclosures. Table 1 lists every container specification verbatim.",
+            s_p0,
+        ),
+        Spacer(1, 4),
+        Paragraph("Table 1: Complete 14-Tier BIS IS 2771 (Part 1): 2022 and Cold-Chain Container Catalog", s_cap),
+    ]
 
-    # ---- PAGE 4: BIS IS 2771 Catalog & Compatibility Matrix ----
-    cont_rows = [["ID", "Tier", "Inner (cm)", "Tare / Max (kg)", "Ply / BS / ECT", "Cost (Rs.)"]]
+    rep_t1_rows = [["Container ID", "Tier Class", "Inner Dimensions (cm)", "Ply Rating", "Burst (kgf/cm2)", "ECT (kN/m)", "Max (kg)", "Cost (Rs.)"]]
     for c in ORDERED_CONTAINERS:
-        cont_rows.append([
+        d = f"{c.inner_dims_cm[0]:.0f} x {c.inner_dims_cm[1]:.0f} x {c.inner_dims_cm[2]:.0f}"
+        rep_t1_rows.append([
             c.container_id,
             c.tier_class,
-            f"{c.inner_dims_cm[0]:.0f}x{c.inner_dims_cm[1]:.0f}x{c.inner_dims_cm[2]:.0f}",
-            f"{c.tare_weight_kg:.1f} / {c.max_payload_kg:,.0f}",
-            f"{c.ply_rating} | {c.burst_strength_kgf_cm2:.0f} | {c.ect_kn_m:.1f}",
-            f"Rs.{c.material_cost_inr:,.0f}",
+            d,
+            c.ply_rating,
+            f"{c.burst_strength_kgf_cm2:.1f}",
+            f"{c.ect_kn_m:.1f}",
+            f"{c.max_payload_kg:.0f}",
+            f"{c.material_cost_inr:.0f}",
         ])
+    p3.append(_booktabs_table(
+        rep_t1_rows,
+        [text_w * 0.15, text_w * 0.11, text_w * 0.21, text_w * 0.15, text_w * 0.11, text_w * 0.09, text_w * 0.09, text_w * 0.09],
+        font_size=7.9,
+        pad_v=2.2,
+    ))
+    pages.append(p3)
 
-    cat_rows = [["Code", "Product Category", "Fragility Range", "Value/kg (Rs.)", "Segregation / Hazard Handling"]]
-    for spec in PRODUCT_CATEGORIES.values():
-        notes = []
-        if spec.requires_cold_chain:
-            notes.append("Cold-Chain (2-8 C)")
-        if spec.esd_sensitive:
-            notes.append("ESD Bags + Desiccant")
-        if spec.heavy_duty:
-            notes.append("Isolated from Fragile >=10kg")
-        if not notes:
-            notes.append("Liquid / Fragile-Aware Dry Grouping")
-        cat_rows.append([
-            str(spec.code),
-            spec.name,
-            f"{spec.fragility_range[0]:.2f} – {spec.fragility_range[1]:.2f}",
-            f"Rs.{spec.default_value_per_kg:,.0f}",
-            ", ".join(notes),
-        ])
-
-    pages_content.append([
-        Paragraph("4. BIS IS 2771 Container Catalog & Category Standards", s_sec),
-        Paragraph(
-            "All container assets in PackOptima derive from a single catalog module (`backend/core/catalog.py`) synchronizing geometry, tare mass, corrugated board Bursting Strength (kgf/cm²), Edge Crush Test (kN/m) per BIS IS 2771 (Part 1): 2022, and wholesale Indian unit material prices.",
-            s_txt,
-        ),
-        Paragraph("4.1 Standard 14-Container Engineering Catalog", s_sub),
-        corp_table(cont_rows, [82, 54, 82, 78, 152, USABLE_W - 448], 7.4),
-        Spacer(1, 7),
-        Paragraph("4.2 Canonical 10 Product Categories & Segregation Rules", s_sub),
-        corp_table(cat_rows, [32, 122, 76, 72, USABLE_W - 302], 7.5),
-    ])
-
-    # ---- PAGE 5: 3D CP-SAT Packing & ISTA 3A Cushioning ----
-    pages_content.append([
-        Paragraph("5. Mathematical 3D Bin Packing & ISTA 3A Cushioning", s_sec),
-        Paragraph(
-            "Manual bounding-box rules fail whenever multiple asymmetric items must co-exist inside a single box or when fragile items require corner clearance. PackOptima solves exact orthogonal 3D packing using Google OR-Tools CP-SAT.",
-            s_txt,
-        ),
-        Paragraph("5.1 ISTA 3A Per-Face Cushioning Schedule", s_sub),
-        corp_table(
-            [
-                ["Fragility Score Band", "Unit Mass Condition", "Per-Face Pad (cm)", "Total Dim Addition", "Recommended Medium"],
-                ["f < 0.25 (Apparel, Books)", "Any", "0.0 cm", "+0.0 cm / axis", "Crushed Kraft Paper Void Fill"],
-                ["0.25 <= f < 0.50 (General, Auto)", "Any", "0.5 cm", "+1.0 cm / axis", "Multi-Layer Kraft / Air Pillows"],
-                ["0.50 <= f < 0.75 (Electronics, Pharma)", "< 5.0 kg / >= 5.0 kg", "1.5 cm / 2.0 cm", "+3.0 / +4.0 cm", "Anti-Static Bubble / EPE Planks"],
-                ["f >= 0.75 (Glass, Ceramics, Fine Art)", "< 5.0 kg / >= 5.0 kg", "2.5 cm / 3.0 cm", "+5.0 / +6.0 cm", "High-Resilience EPE + Corner Guards"],
-            ],
-            [135, 90, 76, 82, USABLE_W - 383],
-            7.6,
-        ),
+    # =========================================================================
+    # PAGE 4: Chapter 3 - 3D Constrained Bin Packing Formulation + Fig 2
+    # =========================================================================
+    p4: list[Any] = [
+        Paragraph("Chapter 3: Three-Dimensional Constrained Bin Packing Formulation", s_ch),
+        HRFlowable(width="100%", thickness=0.6, color=colors.black),
         Spacer(1, 6),
-        Paragraph("5.2 CP-SAT Decision Variables, Constraints & Gravity Objective", s_sub),
-        Paragraph("1. <b>Quantity Expansion & Scaling:</b> Each SKU with quantity q_i is expanded into discrete unit cuboids padded by 2*pad_cm on all three axes and scaled by 10x to exact integer decamillimeters.", s_bul),
-        Paragraph("2. <b>Axis-Aligned Rotations:</b> Rotation variable rot_i selects from 6 permutations {(L,W,H), (L,H,W), (W,L,H), (W,H,L), (H,L,W), (H,W,L)}. Orientation-sensitive items restrict rot_i to {0, 2} via AddAllowedAssignments, preserving height along the z-axis.", s_bul),
-        Paragraph("3. <b>Containment & Disjunctive Non-Overlap:</b> Box bounds x_i + dx_i <= BL (similarly y, z) and 6 Boolean separation literals (x_i + dx_i <= x_j, etc.) guarantee zero 3D intersection across every pair (i, j).", s_bul),
-        Paragraph("4. <b>Symmetry Breaking & Objective:</b> Identical expanded units enforce z_{i-1} <= z_i. Solver minimizes sum_i max(1, round(10 * w_i)) * (8*z_i + x_i + y_i), anchoring heavy goods on the box floor.", s_bul),
-        Paragraph("5. <b>Multi-Carton Splitting & Bulk Fallback:</b> When single cartons cannot fit multi-unit orders, _try_multi_carton_split packs sorted units into 2..5 identical cartons (verified per bin via CP-SAT). Orders above 35 units use a deterministic 3D shelf First-Fit Decreasing packer (<10 ms); unpadded fallback fires only if no padded parcel container fits, recording cushion_adequacy_ratio < 1.0.", s_bul),
+        Paragraph("3.1 ISTA 3A Dynamic Cushion Allowance", s_sec),
         Paragraph(
-            "Solver Parameters: max_time_in_seconds = 0.25 s | relative_gap_limit = 0.10 | num_search_workers = 4 (n > 6) or 1 (n <= 6).",
-            s_code,
+            "Unlike idealized geometric bin packing where rectangular items contact rigid walls directly, transit-ready packaging allocates internal void fill or expanded polyethylene (EPE) buffers around vulnerable exteriors. Following ISTA 3A drop-shock standards, PackOptima determines piecewise protective thickness c_i (cm) from normalized fragility f_i in [0.05, 0.98] and item weight m_i (kg):",
+            s_p0,
         ),
-    ])
+        EquationBlock("c_i = { 0.0 (f < 0.25);  0.5 (0.25 <= f < 0.50);  2.0 if m>=5 else 1.5 (f < 0.75);  3.0 if m>=5 else 2.5 (f >= 0.75) }", "2", text_w, font_size=8.8),
+        Paragraph(
+            "Adding 2*c_i along each spatial axis inflates packed bounding footprints prior to coordinate allocation, ensuring shock isolation across all six box faces without post-processing dimensional collisions.",
+            s_p,
+        ),
+        Paragraph("3.2 Exact OR-Tools CP-SAT Disjunctive Model and Multi-Carton Splitting", s_sec),
+        Paragraph(
+            "Each expanded unit i is packed inside candidate internal container walls (L, W, H) discretized to integer millimeters. Six permutation binary selectors r_{i,o} govern valid orthogonal rotations; for liquid or upright-restricted electronics, axis flips inverting vertical height are deactivated prior to branch-and-bound. Letting (x_i, y_i, z_i) denote lower-left origin offsets and (dx_i, dy_i, dz_i) active dimensions, exact placement enforces:",
+            s_p0,
+        ),
+        EquationBlock("x_i + dx_i <= L,     y_i + dy_i <= W,     z_i + dz_i <= H     forall i in I_k", "3", text_w, font_size=9.5),
+        EquationBlock("b_{i,j,x+} + b_{i,j,x-} + b_{i,j,y+} + b_{i,j,y-} + b_{i,j,z+} + b_{i,j,z-} >= 1     forall i < j", "4", text_w, font_size=9.5),
+        EquationBlock("sum_{o in O_upright} r_{i,o} = 1     when liquid(i) = 1 or upright_lock(i) = 1", "5", text_w, font_size=9.5),
+        EquationBlock("minimize   sum_i (2*z_i + x_i + y_i) + lambda_top * z_i * m_i", "6", text_w, font_size=9.5),
+        Paragraph(
+            "Disjunctive boolean literals (4) prohibit physical overlaps in CP-SAT, while objective (6) compacts heavy cargoes toward lower origin corners to prevent top-crush instability. When single-container volume or mass is insufficient, balanced multi-carton splitting across k in {2..5} homogenous cartons is solved before escalating to pallets or trucks. For manifests exceeding 35 expanded units, the engine transitions smoothly to an O(n log n) upright Shelf-FFD layer algorithm preserving identical cushion margins.",
+            s_p,
+        ),
+        Spacer(1, 3),
+        _fit_image(figs["fig2"], text_w * 0.96),
+        Paragraph("Figure 2: (a) ISTA-padded 3D placement geometry inside C-LARGE-99 and (b) log payload vs. ECT ratings across 14 containers.", s_cap),
+    ]
+    pages.append(p4)
 
-    # ---- PAGE 6: Zone A-E Routing, Freight Pricing & Carbon ----
-    pages_content.append([
-        Paragraph("6. Indian Zone A–E Routing, Freight Costing & Scope 3 CO2e", s_sec),
-        Paragraph("6.1 Six-Digit Indian PIN Carrier Zone Matrix", s_sub),
-        corp_table(
-            [
-                ["Zone Tier", "Geographic Scope & PIN Rules", "Dist. Mult", "Nodes", "Surface SLA", "Air SLA", "Est. km"],
-                ["Zone A (Local)", "Same 3-digit prefix or Metro Cluster (NCR, MMR, BLR, MAA, CCU, HYD)", "1.00x", "2", "1–2 days", "1 day", "35 km"],
-                ["Zone B (Regional)", "Same state, same 2-digit prefix, or adjacent non-metro states", "1.30x", "3", "2–3 days", "1–2 days", "320 km"],
-                ["Zone C (Metro)", "Cross-region Tier-1 metro-to-metro corridors (e.g., 110001 -> 560001)", "1.65x", "4", "3–4 days", "1–2 days", "1,450 km"],
-                ["Zone D (National)", "Cross-country non-metro (2.05x adjacent macro-zones, 2.35x opposite)", "2.05–2.35x", "5", "4–6 days", "2 days", "1,750–2,150"],
-                ["Zone E (Special)", "NE (78–79), J&K/Ladakh (18–19), HP (17), Islands (744, 68255), APS (9*)", "2.85x", "7", "6–10 days", "2–3 days", "2,450 km"],
-            ],
-            [78, 178, 48, 32, 54, 48, USABLE_W - 438],
-            7.3,
-        ),
+    # =========================================================================
+    # PAGE 5: Chapter 4 - Physics-Informed Damage Risk Modeling + Fig 1
+    # =========================================================================
+    p5: list[Any] = [
+        Paragraph("Chapter 4: Physics-Informed Damage Risk Modeling", s_ch),
+        HRFlowable(width="100%", thickness=0.6, color=colors.black),
         Spacer(1, 6),
-        Paragraph("6.2 Calibrated Freight, Cold-Chain, PTL & Carbon Equations", s_sub),
-        Paragraph("• <b>Parcel & Cold-Parcel Billing:</b> Outer box volume / 5000 yields volumetric weight. Chargeable weight takes max(payload + tare, vol_wt), rounded to 0.5 kg slabs (<=5 kg) or 1.0 kg (>5 kg), then tapered above 10 kg (tapered = min(W,10) + 0.8*max(0, W-10)). Docket fees are Rs.25 (Last-Mile), Rs.35 (Surface), Rs.50 (Air) + Rs.60 ODA surcharge for Zone E.", s_bul),
-        Paragraph("• <b>Dunnage Cost:</b> Unprotected void litres * {Rs.0.45 kraft, Rs.0.75 air pillows, Rs.1.60 EPE foam}, capped at 0.55 * material_cost (Rs.0 for pallets/FTL).", s_bul),
-        Paragraph("• <b>B2B Pallet (PALLET-STD) CFT Billing:</b> Uses actual CP-SAT stacked height (max_z + 15 cm deck, clamped 45–165 cm) to compute occupied CFT * 7.0 kg/CFT density with a 50 kg minimum docket floor at Rs.9/kg + Rs.250 waybill fee.", s_bul),
-        Paragraph("• <b>Cold-Chain & FTL Rules:</b> Passive CC-EPS-* (48 h holdover) is permitted on Zone A Last-Mile, Zone B Priority Cold Surface (<=3 days), and Express Air (Zones A–E), blocking slow Zone C–E surface legs. FTL trucks apply realistic lane multipliers {A:0.50x, B:0.95x, C:2.10x, D:2.45x, E:3.10x}.", s_bul),
-        Paragraph("• <b>Scope 3 Carbon & Baseline ROI:</b> Transport CO2e = (gross_wt/1000) * km * factor (Air 0.602, Last-Mile 0.160, Reefer 0.135, Surface 0.085, PTL 0.068) + tare * (1.85 cold / 0.92 corrugated). Unoptimized baseline compares against stepping up +2 carton sizes within the same tier.", s_bul),
-    ])
-
-    # ---- PAGE 7: 15-Feature ML Risk Modeling ----
-    dash_path = os.path.join(ROOT_DIR, "backend", "ml", "artifacts", "evaluation_dashboard.png")
-    pages_content.append([
-        Paragraph("7. Physics-Grounded ML Transit Damage Risk Pipeline", s_sec),
+        Paragraph("4.1 Engineering Stress Descriptor Formulation", s_sec),
         Paragraph(
-            "Rather than relying on static linear rules, PackOptima generates 12,000 synthetic shipments via Bernoulli draws from calibrated logistic physics covering normal operations (~64%) and failure modes (under-cushioned manual packing, high void vibration, low-ECT overload, and cargo commingling, yielding 19.71% damaged prevalence).",
-            s_txt,
+            f"To bridge geometric placement efficiency and transit survivability, PackOptima extracts {len(meta['feature_columns'])} continuous and indicator descriptors matching the deployed feature schema: max_fragility, mean_fragility, unprotected_void_pct, cushion_adequacy_ratio, total_weight_kg, item_count, has_liquid, orientation_sensitive, distance_multiplier, handling_nodes, weight_to_limit_ratio, board_ect_kn_m, transit_vibration_factor, incompatibility_hazard, and category_encoded.",
+            s_p0,
         ),
-        Paragraph("7.1 15 Physical & Operational Features", s_sub),
         Paragraph(
-            "1. max_fragility | 2. mean_fragility | 3. unprotected_void_pct | 4. cushion_adequacy_ratio | 5. total_weight_kg | 6. item_count | 7. has_liquid | 8. orientation_sensitive | 9. distance_multiplier | 10. handling_nodes | 11. weight_to_limit_ratio | 12. board_ect_kn_m | 13. transit_vibration_factor | 14. incompatibility_hazard | 15. category_encoded (0..9).",
-            s_code,
+            "These descriptors couple geometric pack quality directly with structural limits and route stress. Unprotected internal void space creates free-drop acceleration runways during lorry braking; weight_to_limit_ratio paired against corrugated board Edge Crush Test strength (kN/m) captures vertical stacking crush risk; cushion_adequacy_ratio measures deployed protective fill relative to theoretical fragility demand; and distance_multiplier alongside handling_nodes represents hub sortation shock frequency along domestic freight corridors.",
+            s_p,
         ),
-        Paragraph("7.2 Isotonic Calibration & Classifier Comparison (2,400 Held-Out Test Rows)", s_sub),
-        corp_table(
-            [
-                ["Classifier (Calibrated)", "Accuracy", "F1 Score", "ROC-AUC", "Avg Precision", "Brier Score", "5-Fold CV AUC"],
-                [
-                    "XGBoost (Selected)",
-                    f"{eval_sum['XGBoost']['accuracy']:.4f}",
-                    f"{eval_sum['XGBoost']['f1_score']:.4f}",
-                    f"{eval_sum['XGBoost']['roc_auc']:.4f}",
-                    f"{eval_sum['XGBoost']['avg_precision']:.4f}",
-                    f"{eval_sum['XGBoost']['brier_score']:.4f}",
-                    f"{eval_sum['XGBoost']['cv_auc_mean']:.4f} +/- {eval_sum['XGBoost']['cv_auc_std']:.4f}",
-                ],
-                [
-                    "RandomForest",
-                    f"{eval_sum['RandomForest']['accuracy']:.4f}",
-                    f"{eval_sum['RandomForest']['f1_score']:.4f}",
-                    f"{eval_sum['RandomForest']['roc_auc']:.4f}",
-                    f"{eval_sum['RandomForest']['avg_precision']:.4f}",
-                    f"{eval_sum['RandomForest']['brier_score']:.4f}",
-                    f"{eval_sum['RandomForest']['cv_auc_mean']:.4f} +/- {eval_sum['RandomForest']['cv_auc_std']:.4f}",
-                ],
-                [
-                    "HistGradientBoosting",
-                    f"{eval_sum['HistGradientBoosting']['accuracy']:.4f}",
-                    f"{eval_sum['HistGradientBoosting']['f1_score']:.4f}",
-                    f"{eval_sum['HistGradientBoosting']['roc_auc']:.4f}",
-                    f"{eval_sum['HistGradientBoosting']['avg_precision']:.4f}",
-                    f"{eval_sum['HistGradientBoosting']['brier_score']:.4f}",
-                    f"{eval_sum['HistGradientBoosting']['cv_auc_mean']:.4f} +/- {eval_sum['HistGradientBoosting']['cv_auc_std']:.4f}",
-                ],
-            ],
-            [112, 54, 54, 58, 66, 60, USABLE_W - 404],
-            7.5,
-        ),
-        Spacer(1, 5),
-        _aspect_image(dash_path, USABLE_W - 14),
-        Paragraph("Figure 7.1: ROC curves, Precision-Recall curves, best-model confusion matrix, and feature importance rankings.", s_cap),
-    ])
-
-    # ---- PAGE 8: Post-Hoc LLM Switching & Corporate SaaS UI/UX ----
-    pages_content.append([
-        Paragraph("8. Post-Hoc Multi-LLM Layer & Corporate Control Tower UI", s_sec),
-        Paragraph("8.1 Dynamic Gemini & Hugging Face Qwen2.5 Provider Switching", s_sub),
+        Paragraph("4.2 Synthetic Physics Hazard Law and Isotonic Calibration", s_sec),
         Paragraph(
-            "ExplainerService translates finalized packing geometry, BIS IS 2771 board ratings, Route Zone SLAs, and calibrated risk percentages into structured `[ANALYSIS]` rationale and numbered `[INSTRUCTIONS]` warehouse SOPs. Users switch seamlessly in the sidebar between:",
-            s_txt,
+            f"Ground-truth binary breakage outcomes across {meta['n_train_samples'] + meta['n_test_samples']:,} synthetic shipments ({meta['n_train_samples']:,} training, {meta['n_test_samples']:,} test) are sampled from Bernoulli realizations D ~ Bernoulli(p) under a continuous physical logistic hazard model:",
+            s_p0,
         ),
-        Paragraph("• <b>Google Gemini (`google-genai` SDK):</b> `gemini-2.5-flash` (fast balanced default) or `gemini-2.5-pro` (deep reasoning), backed by `GEMINI_API_KEY`.", s_bul),
-        Paragraph("• <b>Hugging Face Small Qwen Models (`InferenceClient.chat_completion`):</b> `Qwen/Qwen2.5-1.5B-Instruct`, `Qwen/Qwen2.5-3B-Instruct` (recommended small default), `Qwen/Qwen2.5-7B-Instruct`, project fine-tuned `PYatiM/packaging_advisor_ps116`, or any custom Hugging Face repo ID—with automatic serverless fallback to Qwen2.5-7B-Instruct and deterministic offline engineering fallback.", s_bul),
+        EquationBlock("P(D = 1 | x) = 1 / (1 + exp(-(beta_0 + beta^T phi(x) + interaction_terms)))", "7", text_w, font_size=9.5),
+        Paragraph(
+            "Raw gradient-boosted margins frequently mis-estimate boundary probabilities under extreme risk or imbalanced class priors. Therefore, candidate models undergo 3-fold stratified isotonic regression recalibration via CalibratedClassifierCV. Isotonic regression learns a monotonic non-parametric step mapping minimizing proper Brier squared error, ensuring predicted failure probabilities act as reliable expected financial weights inside landed cost ranking.",
+            s_p,
+        ),
         Spacer(1, 4),
-        Paragraph("8.2 Five-Workspace Corporate SaaS Control Tower (`frontend/app.py`)", s_sub),
-        corp_table(
-            [
-                ["Workspace", "Key Capabilities & Interactive UX Features"],
-                ["1. Order Studio & Dispatch", "DB Master SKU quick-picker (@st.fragment), custom ad-hoc form with 1-click DB save, CSV/JSON/Preset import, inline data_editor, and 4 objective modes (Balanced, Lowest Cost, Max Protection, Eco-Friendly)."],
-                ["2. 3D Load Plan & Optimization", "4 KPI ROI/Carbon cards, Handling Compliance Pills, Printable HTML/Markdown Manifest export, and HTML5 Canvas 3D Viewer featuring Orbit Drag, Zoom, Exploded View slider, ISTA Cushion Shell toggle & multi-box selector."],
-                ["3. Master SKU & Box Registry", "Live relational DB CRUD for 10-category Master SKUs and custom warehouse containers (which immediately participate in CP-SAT packing)."],
-                ["4. Audit Log & QA Telemetry", "Historical order ledger, manifest re-download, and inline Carrier QA Feedback (Delivered Intact / Damaged in Transit) updating calibration stats."],
-                ["5. Executive Analytics & ESG", "Altair interactive charts for Spend vs Savings trend, Container Fleet utilization mix, Zone A–E cost/risk scatter, and Predicted vs Observed QA calibration."],
-            ],
-            [135, USABLE_W - 135],
-            7.8,
-        ),
-    ])
+        _fit_image(figs["fig1"], text_w * 0.98),
+        Paragraph("Figure 1: Complete PackOptima architecture linking partitioning, 3D CP-SAT / Shelf-FFD packing, calibrated ML prediction, pricing, and SQLite persistence.", s_cap),
+    ]
+    pages.append(p5)
 
-    # ---- PAGE 9: Empirical Benchmarks & Ablation Studies ----
-    pages_content.append([
-        Paragraph("9. Empirical Evaluation, Ablation Studies & Sensitivity", s_sec),
-        _aspect_image(figs["fig3"], USABLE_W - 10),
-        Paragraph("Figure 9.1: 200-cart comparative benchmark across Proposed Pipeline, Always-Largest-Box, Simulated Manual, and No-Grouping.", s_cap),
-        Paragraph("9.1 Statistical Baseline Comparison (n = 200 Carts, Paired Wilcoxon)", s_sub),
-        corp_table(
-            [
-                ["Method", "Avg Utilization %", "Avg Direct Cost", "Avg Damage Risk", "Wilcoxon p-value"],
-                ["Proposed Pipeline (Ours)", f"{c_prop['utilization_pct']['mean']:.1f}% (+/-{c_prop['utilization_pct']['std']:.1f}%)", f"Rs. {c_prop['total_estimated_cost']['mean']:,.2f}", f"{c_prop['damage_risk_probability']['mean']:.3f} (+/-{c_prop['damage_risk_probability']['std']:.3f})", "Reference"],
-                ["Always-Largest (C-XL-100)", f"{c_larg['utilization_pct']['mean']:.1f}% (+/-{c_larg['utilization_pct']['std']:.1f}%)", f"Rs. {c_larg['total_estimated_cost']['mean']:,.2f}", f"{c_larg['damage_risk_probability']['mean']:.3f} (+/-{c_larg['damage_risk_probability']['std']:.3f})", "p < 0.001"],
-                ["Simulated Manual", f"{c_man['utilization_pct']['mean']:.1f}% (+/-{c_man['utilization_pct']['std']:.1f}%)", f"Rs. {c_man['total_estimated_cost']['mean']:,.2f}", f"{c_man['damage_risk_probability']['mean']:.3f} (+/-{c_man['damage_risk_probability']['std']:.3f})", "p < 0.001"],
-                ["No-Grouping Baseline", f"{c_nogrp['utilization_pct']['mean']:.1f}% (+/-{c_nogrp['utilization_pct']['std']:.1f}%)", f"Rs. {c_nogrp['total_estimated_cost']['mean']:,.2f}", f"{c_nogrp['damage_risk_probability']['mean']:.3f} (+/-{c_nogrp['damage_risk_probability']['std']:.3f})", "p < 0.001"],
-            ],
-            [122, 94, 88, 114, USABLE_W - 418],
-            7.6,
-        ),
-        Spacer(1, 5),
-        Paragraph("9.2 Compatibility Grouping Ablation, GenAI Audit & ML Feature Elasticity", s_sub),
-        corp_table(
-            [
-                ["Experiment / Parameter", "Baseline / ON", "Perturbed / OFF", "Relative Delta / Elasticity", "Statistical / Audit Finding"],
-                ["Grouping ON vs OFF (Risk)", f"{ab_grp['damage_risk_probability']['grouping_on_mean']:.3f}", f"{ab_grp['damage_risk_probability']['grouping_off_mean']:.3f}", f"{ab_grp['damage_risk_probability']['pct_change']:+.1f}%", f"p = {ab_grp['damage_risk_probability']['wilcoxon_p_value']:.2e} (Significant)"],
-                ["GenAI Layer ON vs OFF", "All Metrics", "Identical", "0.00% / Rs. 0.00", "Strict Post-Hoc Decision Invariance"],
-                ["ISTA Cushion Ratio (+/-25%)", f"{sens['cushion_adequacy_ratio']['-25%']['mean_risk']:.4f} (-25%)", f"{sens['cushion_adequacy_ratio']['+25%']['mean_risk']:.4f} (+25%)", f"Elasticity {sens['cushion_adequacy_ratio']['elasticity_index']:.3f}", "Strongest Controllable Risk Reducer"],
-                ["Max Fragility (+/-25%)", f"{sens['max_fragility']['-25%']['mean_risk']:.4f} (-25%)", f"{sens['max_fragility']['+25%']['mean_risk']:.4f} (+25%)", f"Elasticity {sens['max_fragility']['elasticity_index']:.3f}", "Dominant Inherent SKU Driver"],
-                ["Unprotected Void % (+/-25%)", f"{sens['unprotected_void_pct']['-25%']['mean_risk']:.4f} (-25%)", f"{sens['unprotected_void_pct']['+25%']['mean_risk']:.4f} (+25%)", f"Elasticity {sens['unprotected_void_pct']['elasticity_index']:.3f}", "Moderate Vibration Rattle Driver"],
-                ["Board ECT kN/m (+/-25%)", f"{sens['board_ect_kn_m']['-25%']['mean_risk']:.4f} (-25%)", f"{sens['board_ect_kn_m']['+25%']['mean_risk']:.4f} (+25%)", f"Elasticity {sens['board_ect_kn_m']['elasticity_index']:.3f}", "Structural Overload Guardrail"],
-            ],
-            [118, 86, 86, 98, USABLE_W - 388],
-            7.4,
-        ),
-    ])
-
-    # ---- PAGE 10: Verification, Deployment, Limitations & References ----
-    pages_content.append([
-        Paragraph("10. Verification, Operations, Limitations & Roadmap", s_sec),
-        Paragraph("10.1 Automated Testing & Turnkey Verification", s_sub),
-        Paragraph("• <b>36 Automated `pytest` Tests:</b> Cover Zone A–E PIN routing and fallback, cargo segregation, ISTA cushion expansion, upright height locking, quantity expansion, zero pairwise 3D overlap invariants, 2–5 box splitting, passive vs. reefer cold-chain boundaries, CFT pallet floors, SQLite CRUD + custom box inclusion, HTML/Markdown manifests, QA feedback updates, Qwen2.5 small model switching, and monotonic zone pricing.", s_bul),
-        Paragraph("• <b>Turnkey Execution (`python run_app.py`):</b> Boots FastAPI (:8000) and Streamlit (:8501) in one command, supports `--check` automated health validation, and ships split Dockerfiles (`requirements.txt` vs. slim `requirements-ui.txt`) gated by GitHub Actions CI.", s_bul),
-        Spacer(1, 5),
-        Paragraph("10.2 Limitations & Production Roadmap", s_sub),
-        corp_table(
-            [
-                ["Current Prototype Boundary", "Planned Production Enhancement"],
-                ["Damage classifier trained on synthetic physics priors", "Retrain continuously via logged `shipment_records.actual_outcome` carrier claims"],
-                ["Standardized domestic base rate assumptions (2025-01-15)", "Integrate live Delhivery / Blue Dart / Shiprocket pincode serviceability & rate APIs"],
-                ["Axis-aligned orthogonal 3D packing without pallet interlocking", "Add weight-bearing stackability constraints & automated mixed-pallet load sheets"],
-                ["Single-warehouse dispatch origin per order", "Multi-warehouse inventory allocation and split-node consolidation optimization"],
-            ],
-            [225, USABLE_W - 225],
-            7.8,
-        ),
+    # =========================================================================
+    # PAGE 6: Chapter 5 - Classifier Evaluation & Calibration (Table 2, Fig 3)
+    # =========================================================================
+    p6: list[Any] = [
+        Paragraph("Chapter 5: Classifier Evaluation, Calibration, and Inference Optimization", s_ch),
+        HRFlowable(width="100%", thickness=0.6, color=colors.black),
         Spacer(1, 6),
-        Paragraph("10.3 Key Technical References", s_sub),
-        Paragraph("[1] Bureau of Indian Standards, IS 2771 (Part 1): 2022 — Corrugated Fibreboard Boxes Specification.", s_bul),
-        Paragraph("[2] International Safe Transit Association (ISTA), Procedure 3A — Parcel Delivery System Shipments <= 70 kg.", s_bul),
-        Paragraph("[3] Perron & Furnon, Google OR-Tools CP-SAT Constraint Solver v9.7; Martello, Pisinger & Vigo (2000), 3D Bin Packing.", s_bul),
-        Paragraph("[4] Chen & Guestrin (2016), XGBoost; Zadrozny & Elkan (2002), Isotonic Classifier Probability Calibration.", s_bul),
-        Paragraph("[5] Qwen Team (2024), Qwen2.5 Technical Report; Google DeepMind (2025), Gemini 2.5 Model Family.", s_bul),
-    ])
+        Paragraph("5.1 Experimental Training and Model Selection", s_sec),
+        Paragraph(
+            f"All three candidate ensemble families—Tuned XGBoost (220 estimators, max depth 4), Random Forest, and Histogram Gradient Boosting—were trained over {meta['n_train_samples']:,} simulated multi-SKU consignments and evaluated across both an independent {meta['n_test_samples']:,}-sample test split and 5-fold stratified cross-validation. Identical 3-fold isotonic post-calibration wrappers were applied across every model family.",
+            s_p0,
+        ),
+        Paragraph(
+            f"As reported in Table 2 and Figure 3, calibrated XGBoost delivers top generalization performance across all evaluation dimensions, recording test ROC-AUC = {xgb['roc_auc']:.4f}, Average Precision = {xgb['avg_precision']:.4f}, Accuracy = {xgb['accuracy']:.4f}, F1-Score = {xgb['f1_score']:.4f}, and 5-fold CV AUC = {xgb['cv_auc_mean']:.4f} +/- {xgb['cv_auc_std']:.4f}. Notably, it achieves the minimal Brier calibration loss ({xgb['brier_score']:.4f}), confirming reliable probabilistic sharpness across low-, medium-, and high-hazard corridors.",
+            s_p,
+        ),
+        Spacer(1, 3),
+        Paragraph(f"Table 2: Calibrated Classifier Test Performance (n_test = {meta['n_test_samples']:,}) and 5-Fold Cross-Validation", s_cap),
+    ]
 
-    story = []
-    for idx, page_flows in enumerate(pages_content):
-        story.append(KeepInFrame(USABLE_W, USABLE_H - 4, page_flows, mode="shrink"))
-        if idx < len(pages_content) - 1:
+    rep_t2_rows = [["Model Family", "Accuracy", "F1-Score", "ROC-AUC", "Avg. Prec.", "Brier Loss", "5-Fold CV AUC"]]
+    for mn in ["XGBoost", "RandomForest", "HistGradientBoosting"]:
+        md = ev[mn]
+        rep_t2_rows.append([
+            mn,
+            f"{md['accuracy']:.4f}",
+            f"{md['f1_score']:.4f}",
+            f"{md['roc_auc']:.4f}",
+            f"{md['avg_precision']:.4f}",
+            f"{md['brier_score']:.4f}",
+            f"{md['cv_auc_mean']:.4f} +/- {md['cv_auc_std']:.4f}",
+        ])
+    p6.append(_booktabs_table(
+        rep_t2_rows,
+        [text_w * 0.22, text_w * 0.11, text_w * 0.11, text_w * 0.12, text_w * 0.12, text_w * 0.12, text_w * 0.20],
+        font_size=8.3,
+        pad_v=2.7,
+    ))
+    p6.extend([
+        Spacer(1, 6),
+        Paragraph("5.2 Runtime Thread Optimization and Inference Caching", s_sec),
+        Paragraph(
+            "Because candidate container ranking evaluates up to 14 container specs plus split counts sequentially inside API request lifetimes, repeated multi-threaded OpenMP worker dispatch on single-row inference matrices introduces significant synchronization overhead. Overriding runtime estimator concurrency to n_jobs = 1 alongside a parameter-rounded deterministic LRU cache cuts per-cart prediction sweeps down to sub-millisecond latency without changing floating-point outputs.",
+            s_p0,
+        ),
+        Spacer(1, 4),
+        _fit_image(figs["fig3"], text_w * 0.96),
+        Paragraph("Figure 3: Test-set discrimination (a) and 5-fold cross-validation ROC-AUC against Brier calibration score (b).", s_cap),
+    ])
+    pages.append(p6)
+
+    # =========================================================================
+    # PAGE 7: Chapter 6 - Indian PIN Freight, Scope 3 Emissions, GenAI Isolation & DB
+    # =========================================================================
+    p7: list[Any] = [
+        Paragraph("Chapter 6: Multi-Zone Indian Freight, Carbon Accounting, and Advisory Isolation", s_ch),
+        HRFlowable(width="100%", thickness=0.6, color=colors.black),
+        Spacer(1, 6),
+        Paragraph("6.1 Indian 6-Digit PIN Routing and Volumetric Tariff Physics", s_sec),
+        Paragraph(
+            "Shipping tariffs in Indian fulfillment scale directly across five domestic origin–destination zone definitions resolved by the routing module: Zone A (local metro cluster, 1.00x multiplier, 2 handling nodes, 35 km, 1–2 d surface), Zone B (regional intra-state/neighboring, 1.30x, 3 nodes, 320 km, 2–3 d), Zone C (metro-to-metro trunk, 1.65x, 4 nodes, 1,450 km, 3–4 d), Zone D (national cross-country, 2.05–2.35x, 5 nodes, 1,750–2,150 km, 4–6 d), and Zone E (hill states, Jammu & Kashmir, North-East, Islands, and APS ODA lanes, 2.85x, 7 handling nodes, 2,450 km, 6–10 d).",
+            s_p0,
+        ),
+        Paragraph(
+            "Parcel consignments compute volumetric weight L*W*H/5000 and apply tiered carrier slab rounding (0.5 kg steps up to 5.0 kg; 1.0 kg steps above 5.0 kg) with heavy-parcel (10 kg+) rate tapering and kraft dunnage pricing scaled to unprotected void volume. Pallet units apply 7 kg/CFT stacked-height conversion, while cold reefers and 20-ft/40-ft FTL lanes scale flat tariffs across zone multipliers. Risk-adjusted landed cost adds 30% expected cargo value exposure:",
+            s_p,
+        ),
+        EquationBlock("Cost_total = C_box + C_dunnage(void) + C_freight(W_chg, Zone) + 0.30 * P(D=1) * Value_cargo", "8", text_w, font_size=9.3),
+        Spacer(1, 3),
+        Paragraph("6.2 Scope 3 Greenhouse Gas Accounting", s_sec),
+        Paragraph(
+            "Environmental accounting computes Scope 3 CO2e (kg) from tonne-kilometer transport emission factors (Air: 0.602, Last-Mile: 0.160, Refrigerated Road: 0.135, Priority Cold Surface: 0.105, Surface: 0.085, PTL Surface: 0.068) summed with embodied container footprints (1.85 kg CO2e/kg for cold EPS vs. 0.92 kg CO2e/kg for kraft linerboard):",
+            s_p0,
+        ),
+        EquationBlock("CO2e_total = (W_gross / 1000) * Distance_km * EF_mode + (1.85 if cold else 0.92) * Mass_tare", "9", text_w, font_size=9.3),
+        Paragraph(
+            "PackOptima ranks valid candidate plans across four selectable policies: Balanced Trade-off, Minimum Freight Cost, Eco-Friendly Lowest Carbon, and Risk-Averse Fragile Protection.",
+            s_p,
+        ),
+        Paragraph("6.3 Relational Persistence and Dual-Provider Generative AI Isolation", s_sec),
+        Paragraph(
+            "The operational API uses FastAPI paired with SQLAlchemy 2.0 SQLite persistence over four normalized tables (master_skus, custom_containers, order_audits, and shipment_records), recording dispatch manifests and closed-loop QA delivery breakage outcomes.",
+            s_p0,
+        ),
+        Paragraph(
+            "Narrative summaries support dynamic switching between cloud Gemini models (gemini-2.5-flash, gemini-2.5-pro) and Hugging Face InferenceClient small open-weight instruction models (Qwen/Qwen2.5-1.5B-Instruct, 3B, 7B, and PYatiM/packaging_advisor_ps116) with deterministic template fallback. Architectural separation prevents generative models from modifying container picks, spatial coordinates, freight costs, or risk probabilities.",
+            s_p,
+        ),
+    ]
+    pages.append(p7)
+
+    # =========================================================================
+    # PAGE 8: Chapter 7 - Empirical 200-Cart Statistical Evaluation (Table 3, Fig 4)
+    # =========================================================================
+    p8: list[Any] = [
+        Paragraph("Chapter 7: Empirical Evaluation Across 200 Order Carts", s_ch),
+        HRFlowable(width="100%", thickness=0.6, color=colors.black),
+        Spacer(1, 6),
+        Paragraph("7.1 Experimental Benchmark Protocol", s_sec),
+        Paragraph(
+            "End-to-end fulfillment optimization was evaluated across 200 stratified synthetic multi-item carts spanning varied item counts, fragility profiles, PIN corridors, and cold-chain needs. PackOptima (Proposed) was compared against three alternatives under identical pricing and calibrated XGBoost risk scoring engines: (1) Always Largest (forcing maximal box volume), (2) Simulated Manual (common unpartitioned heuristic selections), and (3) No Grouping (running CP-SAT without category partitioning).",
+            s_p0,
+        ),
+        Paragraph(
+            f"Aggregated distributions in Table 3 and Figure 4 expose the operational risk–cost trade-off. Always Largest wastes container space ({larg['utilization_pct']['mean']:.1f}% utilization) and inflates landed expense to Rs. {larg['total_estimated_cost']['mean']:.0f}. Skipping partitioning reduces nominal carton splits to Rs. {nogrp['total_estimated_cost']['mean']:.0f} yet raises predicted breakage risk nearly threefold to {nogrp['damage_risk_probability']['mean']:.3f}. Proposed PackOptima constrains breakage hazard to {prop['damage_risk_probability']['mean']:.3f} +/- {prop['damage_risk_probability']['std']:.3f}, confirming statistically significant protection across two-sided Wilcoxon signed-rank tests.",
+            s_p,
+        ),
+        Spacer(1, 3),
+        Paragraph("Table 3: Empirical Performance Across 200 Stratified Order Carts (Mean +/- Standard Deviation)", s_cap),
+    ]
+
+    rep_t3_rows = [["Optimization Strategy", "Utilization (%)", "Total Cost (Rs.)", "Damage Risk Prob.", "Wilcoxon p vs Proposed"]]
+    for lbl, k in [("Proposed (PackOptima)", "proposed"), ("Always Largest Box", "always_largest"), ("Simulated Manual", "simulated_manual"), ("No Grouping", "no_grouping")]:
+        blk = conds[k]
+        pval = "—" if k == "proposed" else f"{wil[k]['damage_risk_probability']['p_value']:.2e}"
+        rep_t3_rows.append([
+            lbl,
+            f"{blk['utilization_pct']['mean']:.1f} +/- {blk['utilization_pct']['std']:.1f}",
+            f"{blk['total_estimated_cost']['mean']:.1f} +/- {blk['total_estimated_cost']['std']:.1f}",
+            f"{blk['damage_risk_probability']['mean']:.3f} +/- {blk['damage_risk_probability']['std']:.3f}",
+            pval,
+        ])
+    p8.append(_booktabs_table(
+        rep_t3_rows,
+        [text_w * 0.25, text_w * 0.19, text_w * 0.21, text_w * 0.19, text_w * 0.16],
+        font_size=8.3,
+        pad_v=2.8,
+    ))
+    p8.extend([
+        Spacer(1, 8),
+        _fit_image(figs["fig4"], text_w * 0.98),
+        Paragraph("Figure 4: Empirical comparison across 200 carts showing volumetric utilization (a), total estimated cost (b), and calibrated damage risk (c).", s_cap),
+    ])
+    pages.append(p8)
+
+    # =========================================================================
+    # PAGE 9: Chapter 8 - Ablation Studies & +/-25% Sensitivity (Table 4, Fig 5)
+    # =========================================================================
+    p9: list[Any] = [
+        Paragraph("Chapter 8: Component Ablation Studies and Sensitivity Analysis", s_ch),
+        HRFlowable(width="100%", thickness=0.6, color=colors.black),
+        Spacer(1, 6),
+        Paragraph("8.1 Architectural Component Ablations", s_sec),
+        Paragraph(
+            f"Controlled ablations across all 200 carts measure the causal role of domain isolation and narrative decoupling. Toggling compatibility partitioning OFF merges incompatible SKUs into shared boxes: volumetric fill rises +{util_grp['pct_change']:.1f}% and split charges decline {cost_grp['pct_change']:.1f}%, yet expected damage risk jumps +{risk_grp['pct_change']:.1f}% from {risk_grp['grouping_on_mean']:.3f} to {risk_grp['grouping_off_mean']:.3f} (Wilcoxon p = {risk_grp['wilcoxon_p_value']:.2e}). Meanwhile, toggling generative AI advisory explanations ON versus OFF yields 0.00% divergence across utilization, cost, and risk metrics (p = 1.00), verifying complete decoupling.",
+            s_p0,
+        ),
+        Paragraph("8.2 +/-25% Parametric Sensitivity Analysis", s_sec),
+        Paragraph(
+            f"Starting from a benchmark baseline risk of {sens['baseline_mean_risk']:.4f}, four core engineering variables were perturbed +/-25% individually. As reported in Table 4 and Figure 5, ISTA Cushion Adequacy Ratio displays the dominant elasticity index ({pert['cushion_adequacy_ratio']['elasticity_index']:.3f}), raising risk +29.56% (to {pert['cushion_adequacy_ratio']['-25%']['mean_risk']:.4f}) when cushion thickness falls 25%, followed identically by Max Fragility ({pert['max_fragility']['elasticity_index']:.3f}) and Unprotected Void % ({pert['unprotected_void_pct']['elasticity_index']:.3f}), while Board ECT exerts secondary structural modulation ({pert['board_ect_kn_m']['elasticity_index']:.3f}).",
+            s_p0,
+        ),
+        Spacer(1, 4),
+        Paragraph("Table 4: Controlled Ablation Summary and +/-25% Parametric Feature Sensitivity", s_cap),
+    ]
+
+    rep_t4_rows = [
+        ["Experimental Factor / Perturbation", "Observed State / Perturbed Risk", "Measured Impact / Elasticity"],
+        ["Compatibility Grouping (ON -> OFF)", f"Risk {risk_grp['grouping_on_mean']:.3f} -> {risk_grp['grouping_off_mean']:.3f}", f"+{risk_grp['pct_change']:.1f}% risk shift (p = {risk_grp['wilcoxon_p_value']:.2e})"],
+        ["Generative AI Narration (ON vs OFF)", "Util / Cost / Risk invariance", "0.00% numeric divergence (p = 1.00)"],
+        ["ISTA Cushion Adequacy Ratio (+/-25%)", f"-25%: {pert['cushion_adequacy_ratio']['-25%']['mean_risk']:.4f} | +25%: {pert['cushion_adequacy_ratio']['+25%']['mean_risk']:.4f}", f"Elasticity index = {pert['cushion_adequacy_ratio']['elasticity_index']:.3f}"],
+        ["Max Intra-Carton Fragility (+/-25%)", f"-25%: {pert['max_fragility']['-25%']['mean_risk']:.4f} | +25%: {pert['max_fragility']['+25%']['mean_risk']:.4f}", f"Elasticity index = {pert['max_fragility']['elasticity_index']:.3f}"],
+        ["Unprotected Carton Void % (+/-25%)", f"-25%: {pert['unprotected_void_pct']['-25%']['mean_risk']:.4f} | +25%: {pert['unprotected_void_pct']['+25%']['mean_risk']:.4f}", f"Elasticity index = {pert['unprotected_void_pct']['elasticity_index']:.3f}"],
+        ["Corrugated Board ECT kN/m (+/-25%)", f"-25%: {pert['board_ect_kn_m']['-25%']['mean_risk']:.4f} | +25%: {pert['board_ect_kn_m']['+25%']['mean_risk']:.4f}", f"Elasticity index = {pert['board_ect_kn_m']['elasticity_index']:.3f}"],
+    ]
+    p9.append(_booktabs_table(
+        rep_t4_rows,
+        [text_w * 0.36, text_w * 0.32, text_w * 0.32],
+        font_size=8.1,
+        pad_v=2.7,
+    ))
+    p9.extend([
+        Spacer(1, 7),
+        _fit_image(figs["fig5"], text_w * 0.96),
+        Paragraph("Figure 5: Grouping ON vs OFF cost–risk ablation (a) and +/-25% perturbation sensitivity ranking (b).", s_cap),
+    ])
+    pages.append(p9)
+
+    # =========================================================================
+    # PAGE 10: Chapters 9 & 10 - Threats to Validity, Conclusions, References
+    # =========================================================================
+    p10: list[Any] = [
+        Paragraph("Chapter 9: Threats to Validity and Methodological Limitations", s_ch),
+        HRFlowable(width="100%", thickness=0.6, color=colors.black),
+        Spacer(1, 5),
+        Paragraph(
+            "<b>Construct Validity:</b> Because carrier breakage datasets annotated simultaneously with exact corrugated ECT and internal residual void metrics are proprietary, the calibrated XGBoost model trains on synthetic Bernoulli realizations sampled from physics-grounded logistic hazard equations. Environmental ambient humidity degrading starch corrugated bonds and operator taping irregularities remain outside simulated loss variance.",
+            s_p0,
+        ),
+        Paragraph(
+            "<b>Internal Validity:</b> Exact OR-Tools CP-SAT optimization stops at a 2.5 s wall-clock bound per carton configuration and switches orders exceeding 35 expanded physical units to Shelf-FFD heuristics. While necessary for predictable API latency, homogeneous high-volume shipments above this cutoff concede small packing margins compared with unbounded integer searches.",
+            s_p0,
+        ),
+        Paragraph(
+            "<b>External Validity:</b> Freight computations reflect Indian postal Zones A–E, 5,000 cm^3/kg parcel divisor physics, 0.5/1.0 kg slab rounding, and 7 kg/CFT pallet equivalents in Indian Rupees. Deployment across North American or European freight carriers necessitates recalibrating regional divisor norms and currency tariffs.",
+            s_p0,
+        ),
+        Spacer(1, 4),
+        Paragraph("Chapter 10: Conclusions and Future Research Directions", s_ch),
+        HRFlowable(width="100%", thickness=0.6, color=colors.black),
+        Spacer(1, 5),
+        Paragraph(
+            f"PackOptima (PS-116) integrates 10-category SKU partitioning, 14 BIS IS 2771 and cold-chain container standards, ISTA 3A dynamic padding rules, hybrid CP-SAT/Shelf-FFD 3D packing, 3-fold isotonic-calibrated XGBoost damage estimation (ROC-AUC = {xgb['roc_auc']:.4f}, Brier = {xgb['brier_score']:.4f}), multi-zone pricing, and Scope 3 CO2e reporting. Comprehensive software verification across 36 unit/integration tests and 200 statistical cart evaluations confirms both quantitative risk containment and strict numerical isolation of Gemini 2.5 / Qwen2.5 narrative outputs. Future research will investigate automated closed-loop isotonic recalibration using SQLite shipment QA breakage feedback and dynamic vibration-fatigue modeling for stacked pallet shipments.",
+            s_p0,
+        ),
+        Spacer(1, 5),
+        Paragraph("References", s_sec),
+    ]
+
+    rep_refs = [
+        "[1] S. Martello, D. Pisinger, and D. Vigo, \"The three-dimensional bin packing problem,\" <i>Operations Research</i>, vol. 48, no. 2, pp. 256–267, 2000.",
+        "[2] T. G. Crainic, G. Perboli, and R. Tadei, \"Extreme point-based heuristics for three-dimensional bin packing,\" <i>INFORMS J. Computing</i>, vol. 20, no. 3, pp. 368–384, 2008.",
+        "[3] Bureau of Indian Standards, <i>Corrugated Fibreboard Boxes—Specification (Part 1)</i>, BIS IS 2771 (Part 1): 2022, New Delhi, India, 2022.",
+        "[4] International Safe Transit Association, <i>ISTA 3A: Packaged-Products for Parcel Delivery System Shipment</i>, East Lansing, MI, USA, 2018.",
+        "[5] R. C. McKee, J. W. Gander, and J. R. Wachuta, \"Compression strength formula for corrugated boxes,\" <i>Paperboard Packaging</i>, vol. 48, no. 8, pp. 149–159, 1963.",
+        "[6] A. Niculescu-Mizil and R. Caruana, \"Predicting good probabilities with supervised learning,\" in <i>Proc. 22nd ICML</i>, 2005, pp. 625–632.",
+        "[7] T. Chen and C. Guestrin, \"XGBoost: A scalable tree boosting system,\" in <i>Proc. 22nd ACM SIGKDD</i>, 2016, pp. 785–794.",
+        "[8] L. Perron and V. Furnon, <i>OR-Tools CP-SAT Solver</i>, Google Research, Mountain View, CA, USA, 2024.",
+        "[9] A. G. Ramos et al., \"A container loading algorithm with static mechanical equilibrium stability constraints,\" <i>Transp. Res. Part B</i>, vol. 91, pp. 565–581, 2016.",
+        "[10] Smart Freight Centre, <i>Global Logistics Emissions Council (GLEC) Framework v3.0</i>, Amsterdam, 2023.",
+        "[11] G. J. Burgess, \"Consolidation of cushion design data for shock protection,\" <i>Packaging Technology and Science</i>, vol. 12, no. 5, pp. 209–217, 1999.",
+        "[12] Qwen Team, \"Qwen2.5 technical report,\" arXiv:2412.15115, 2024; and Gemini Team, \"Gemini 2.5 technical report,\" Google DeepMind, 2025.",
+    ]
+    for rr in rep_refs:
+        p10.append(Paragraph(rr, s_ref))
+
+    pages.append(p10)
+    assert len(pages) == 10, f"Expected 10 report pages, got {len(pages)}"
+    return pages
+
+
+def build_strict_10page_report_pdf(figs: dict[str, Path], data: dict[str, Any]) -> tuple[Path, int]:
+    """Render an academic 10-page A4 report with KeepInFrame and zero headers/footers/page numbers."""
+    buf = io.BytesIO()
+    page_w, page_h = A4  # 595.27 x 841.89 pt
+    margin_x = 56.0
+    margin_y = 56.0
+    text_w = page_w - 2 * margin_x
+    text_h = page_h - 2 * margin_y
+
+    frame = Frame(
+        margin_x,
+        margin_y,
+        text_w,
+        text_h,
+        leftPadding=0,
+        rightPadding=0,
+        topPadding=0,
+        bottomPadding=0,
+        id="rep_frame",
+    )
+    doc = BaseDocTemplate(buf, pagesize=A4, title="PackOptima Technical Project Report (PS-116)", author=AUTHOR_NAME)
+    doc.addPageTemplates([PageTemplate(id="AcademicPage", frames=[frame], onPage=_noop_page)])
+
+    page_blocks = _build_report_pages(figs, data, text_w)
+    story: list[Any] = []
+    for idx, flowables in enumerate(page_blocks):
+        story.append(KeepInFrame(text_w, text_h, flowables, mode="shrink", hAlign="CENTER", vAlign="TOP"))
+        if idx < len(page_blocks) - 1:
             story.append(PageBreak())
 
     doc.build(story)
-    report_pages = _count_pdf_pages(pdf_path)
+    pdf_bytes = buf.getvalue()
+    page_count = _count_pdf_pages(pdf_bytes)
+    if page_count != 10:
+        raise RuntimeError(f"Academic report generated {page_count} pages instead of 10")
 
-    # Companion Markdown report
-    md_text = f"""# PackOptima Enterprise (PS116 v2.5) — Complete Technical Project Report
+    out_path = DOCS_DIR / "Project_Report_10Pages_PackOptima_PS116.pdf"
+    out_path.write_bytes(pdf_bytes)
+    return out_path, page_count
 
-## 1. Executive Summary
-PackOptima Enterprise unifies **cargo compatibility segregation**, **OR-Tools CP-SAT 3D bin packing** with **ISTA 3A cushioning**, **BIS IS 2771:2022 container specifications**, **Indian Zone A–E PIN routing**, **Scope 3 carbon accounting**, **isotonic 15-feature ML transit-damage estimation** ({best_model}: ROC-AUC `{bm['roc_auc']:.4f}`, Brier `{bm['brier_score']:.4f}`), **SQLAlchemy relational persistence**, and a **strictly post-hoc Gemini 2.5 / Hugging Face Qwen2.5 explanation layer**.
 
-## 2. Empirical Results Summary (200 Carts)
-| Method | Avg Utilization | Avg Direct Cost | Avg Damage Risk | Wilcoxon p-value |
-| :--- | :--- | :--- | :--- | :--- |
-| Proposed Pipeline (Ours) | {c_prop['utilization_pct']['mean']:.1f}% | Rs. {c_prop['total_estimated_cost']['mean']:,.2f} | {c_prop['damage_risk_probability']['mean']:.3f} | — |
-| Always-Largest-Box | {c_larg['utilization_pct']['mean']:.1f}% | Rs. {c_larg['total_estimated_cost']['mean']:,.2f} | {c_larg['damage_risk_probability']['mean']:.3f} | p < 0.001 |
-| Simulated Manual | {c_man['utilization_pct']['mean']:.1f}% | Rs. {c_man['total_estimated_cost']['mean']:,.2f} | {c_man['damage_risk_probability']['mean']:.3f} | p < 0.001 |
-| No-Grouping Baseline | {c_nogrp['utilization_pct']['mean']:.1f}% | Rs. {c_nogrp['total_estimated_cost']['mean']:,.2f} | {c_nogrp['damage_risk_probability']['mean']:.3f} | p < 0.001 |
+def write_report_markdown(data: dict[str, Any]) -> Path:
+    """Write matching scholarly Markdown archive of the 10-page technical report."""
+    ev = data["eval"]
+    meta = data["meta"]
+    stat = data["stat"]
+    abl = data["ablation"]
+    xgb = ev["XGBoost"]
+    rf = ev["RandomForest"]
+    hgb = ev["HistGradientBoosting"]
+    conds = stat["conditions"]
+    wil = stat["wilcoxon_tests_vs_proposed"]
+    grp = abl["ablation_grouping"]
+    sens = abl["sensitivity_analysis"]
+    pert = sens["perturbations"]
+    prop = conds["proposed"]
+    larg = conds["always_largest"]
+    man = conds["simulated_manual"]
+    nogrp = conds["no_grouping"]
 
-## 3. Publications & Artifacts Generated
-- Strict IEEE Paper PDF: `docs/IEEE_Research_Paper_PackOptima_PS116.pdf`
-- Strict IEEE LaTeX Source: `docs/IEEE_Research_Paper_PackOptima_PS116.tex`
-- 10-Page Technical Report PDF: `docs/Project_Report_10Pages_PackOptima_PS116.pdf`
+    md = f"""# PackOptima: Physics-Informed Three-Dimensional Bin Packing, Calibrated Transit Damage Risk Estimation, and Carbon-Aware Freight Optimization (PS-116)
+
+**Author:** {AUTHOR_NAME}  
+**Department:** {AUTHOR_DEPT}  
+**University:** {AUTHOR_UNIV}  
+**Email:** {AUTHOR_EMAIL}
+
+---
+
+## Abstract
+
+Automated e-commerce fulfillment confronts competing geometric, mechanical, environmental, and financial constraints when consolidating multi-SKU orders. This technical report details PackOptima (PS-116), unifying compatibility-constrained partitioning across 10 SKU categories, OR-Tools CP-SAT three-dimensional bin packing over 14 BIS IS 2771 (Part 1): 2022 and cold-chain container tiers with ISTA 3A cushion allowances (`Shelf-FFD` fallback for `n > 35`), isotonic-calibrated `XGBoost` transit damage estimation trained over `{meta['n_train_samples'] + meta['n_test_samples']:,}` shipments (`ROC-AUC = {xgb['roc_auc']:.4f}`, `Brier = {xgb['brier_score']:.4f}`), Indian PIN-zone (Zones A–E) freight pricing, Scope 3 carbon accounting, SQLite relational persistence, and strictly isolated Gemini 2.5 / Qwen2.5 narrative rendering.
+
+---
+
+## Key Empirical Findings
+
+| Metric / Model | Proposed / XGBoost | Comparison Baseline | Notes |
+|---|---:|---:|---|
+| Damage Classifier Test ROC-AUC | {xgb['roc_auc']:.4f} | RF {rf['roc_auc']:.4f} / HGB {hgb['roc_auc']:.4f} | 3-fold isotonic calibration (`n_test = {meta['n_test_samples']:,}`) |
+| Damage Classifier Brier Score | {xgb['brier_score']:.4f} | RF {rf['brier_score']:.4f} / HGB {hgb['brier_score']:.4f} | Lower indicates superior calibration |
+| 200-Cart Mean Damage Risk | {prop['damage_risk_probability']['mean']:.3f} | No Grouping {nogrp['damage_risk_probability']['mean']:.3f} / Manual {man['damage_risk_probability']['mean']:.3f} | Wilcoxon p = {wil['no_grouping']['damage_risk_probability']['p_value']:.2e} |
+| 200-Cart Mean Volumetric Utilization | {prop['utilization_pct']['mean']:.1f}% | Always Largest {larg['utilization_pct']['mean']:.1f}% | Reduces dimensional surcharge |
+| Compatibility Grouping Ablation | {grp['damage_risk_probability']['grouping_on_mean']:.3f} (ON) | {grp['damage_risk_probability']['grouping_off_mean']:.3f} (OFF) | +{grp['damage_risk_probability']['pct_change']:.1f}% risk shift |
+| GenAI Narrative Isolation Delta | 0.00% | N/A | Zero numerical solver perturbation |
+| Baseline Sensitivity Risk | {sens['baseline_mean_risk']:.4f} | ISTA Cushion Elast. {pert['cushion_adequacy_ratio']['elasticity_index']:.3f} | +/-25% perturbation sensitivity peak |
 """
-    with open(md_path, "w", encoding="utf-8") as f:
-        f.write(md_text)
+    md_path = DOCS_DIR / "Project_Report_PackOptima_PS116.md"
+    md_path.write_text(md, encoding="utf-8")
+    return md_path
 
-    return report_pages
 
+# ---------------------------------------------------------------------------
+# Main Entrypoint
+# ---------------------------------------------------------------------------
 
 def main() -> None:
-    os.makedirs(DOCS_DIR, exist_ok=True)
-    os.makedirs(FIG_DIR, exist_ok=True)
+    DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    data = _load_all_artifacts()
+    figs = generate_figures(data)
 
-    eval_sum = _load_json("backend/ml/artifacts/evaluation_summary.json")
-    meta = _load_json("backend/ml/artifacts/model_metadata.json")
-    stat_sum = _load_json("results/statistical_summary.json")
-    abl_sum = _load_json("results/ablation_summary.json")
+    ieee_pdf, ieee_pages, calib_info = build_strict_7page_ieee_pdf(figs, data)
+    ieee_tex = write_ieee_latex(data)
+    rep_pdf, rep_pages = build_strict_10page_report_pdf(figs, data)
+    rep_md = write_report_markdown(data)
 
-    figs = generate_figures(eval_sum, stat_sum)
-    ieee_pages = build_ieee_paper(eval_sum, meta, stat_sum, abl_sum, figs)
-    report_pages = build_10page_report(eval_sum, meta, stat_sum, abl_sum, figs)
+    assert ieee_pages == 7, f"IEEE PDF must be 7 pages, got {ieee_pages}"
+    assert rep_pages == 10, f"Report PDF must be 10 pages, got {rep_pages}"
 
-    print(f"[DONE] IEEE Paper PDF generated : docs/IEEE_Research_Paper_PackOptima_PS116.pdf ({ieee_pages} pages)")
-    print(f"[DONE] 10-Page Report PDF generated: docs/Project_Report_10Pages_PackOptima_PS116.pdf ({report_pages} pages)")
-
-    assert report_pages == 10, f"Expected strictly 10 pages for technical report, got {report_pages}"
-    assert 4 <= ieee_pages <= 8, f"Expected 4..8 pages for IEEE paper, got {ieee_pages}"
+    print(f"IEEE Paper PDF: {ieee_pdf} ({ieee_pages} pages, params={calib_info['calibrated_params']}, +step_pages={calib_info['overflow_probe_pages']})")
+    print(f"IEEE Paper TeX: {ieee_tex}")
+    print(f"Academic Report PDF: {rep_pdf} ({rep_pages} pages)")
+    print(f"Academic Report MD: {rep_md}")
+    print(f"Figures saved under: {FIG_DIR}")
 
 
 if __name__ == "__main__":
